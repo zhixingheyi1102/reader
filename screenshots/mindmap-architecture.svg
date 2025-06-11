@@ -1,0 +1,115 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 500">
+  <style>
+    .box-text {
+      display: flex; align-items: center; justify-content: center;
+      text-align: center; padding: 4px; box-sizing: border-box;
+    }
+    .loop-text {
+      display: flex; align-items: center; justify-content: center;
+      text-align: center; padding: 4px; box-sizing: border-box;
+    }
+  </style>
+  <rect width="800" height="500" fill="#F0F4F8" rx="10" ry="10" />
+  <text x="400" y="40" font-family="Arial" font-size="24" font-weight="bold" text-anchor="middle" fill="#333">
+    Mindmap Generator Architecture
+  </text>
+  <rect x="320" y="70" width="160" height="60" rx="12" ry="12" fill="#5DADE2" />
+  <foreignObject x="320" y="70" width="160" height="60">
+    <div xmlns="http://www.w3.org/1999/xhtml" class="box-text" style="font-family: Arial; font-size: 16px; font-weight: bold; color: white;">
+      Document Analysis Engine
+    </div>
+  </foreignObject>
+  <rect x="50" y="170" width="140" height="50" rx="10" ry="10" fill="#58D68D" />
+  <foreignObject x="50" y="170" width="140" height="50">
+    <div xmlns="http://www.w3.org/1999/xhtml" class="box-text" style="font-family: Arial; font-size: 14px; font-weight: bold; color: white;">
+      Document Input
+    </div>
+  </foreignObject>
+  <rect x="250" y="170" width="140" height="50" rx="10" ry="10" fill="#EC7063" />
+  <foreignObject x="250" y="170" width="140" height="50">
+    <div xmlns="http://www.w3.org/1999/xhtml" class="box-text" style="font-family: Arial; font-size: 14px; font-weight: bold; color: white;">
+      Document Type<br/>Detection
+    </div>
+  </foreignObject>
+  <rect x="450" y="170" width="140" height="50" rx="10" ry="10" fill="#F4D03F" />
+  <foreignObject x="450" y="170" width="140" height="50">
+    <div xmlns="http://www.w3.org/1999/xhtml" class="box-text" style="font-family: Arial; font-size: 14px; font-weight: bold; color: white;">
+      Topic<br/>Extraction
+    </div>
+  </foreignObject>
+  <rect x="650" y="170" width="140" height="50" rx="10" ry="10" fill="#AF7AC5" />
+  <foreignObject x="650" y="170" width="140" height="50">
+    <div xmlns="http://www.w3.org/1999/xhtml" class="box-text" style="font-family: Arial; font-size: 14px; font-weight: bold; color: white;">
+      Reality<br/>Check
+    </div>
+  </foreignObject>
+  <rect x="50" y="280" width="140" height="50" rx="10" ry="10" fill="#EC7063" />
+  <foreignObject x="50" y="280" width="140" height="50">
+    <div xmlns="http://www.w3.org/1999/xhtml" class="box-text" style="font-family: Arial; font-size: 14px; font-weight: bold; color: white;">
+      Subtopic<br/>Processing
+    </div>
+  </foreignObject>
+  <rect x="250" y="280" width="140" height="50" rx="10" ry="10" fill="#F4D03F" />
+  <foreignObject x="250" y="280" width="140" height="50">
+    <div xmlns="http://www.w3.org/1999/xhtml" class="box-text" style="font-family: Arial; font-size: 14px; font-weight: bold; color: white;">
+      Detail<br/>Extraction
+    </div>
+  </foreignObject>
+  <rect x="450" y="280" width="140" height="50" rx="10" ry="10" fill="#48C9B0" />
+  <foreignObject x="450" y="280" width="140" height="50">
+    <div xmlns="http://www.w3.org/1999/xhtml" class="box-text" style="font-family: Arial; font-size: 14px; font-weight: bold; color: white;">
+      Redundancy<br/>Filter
+    </div>
+  </foreignObject>
+  <rect x="650" y="280" width="140" height="50" rx="10" ry="10" fill="#58D68D" />
+  <foreignObject x="650" y="280" width="140" height="50">
+    <div xmlns="http://www.w3.org/1999/xhtml" class="box-text" style="font-family: Arial; font-size: 14px; font-weight: bold; color: white;">
+      Output<br/>Generation
+    </div>
+  </foreignObject>
+  <rect x="230" y="390" width="100" height="40" rx="8" ry="8" fill="#9B59B6" stroke="#8E44AD" stroke-width="2" />
+  <foreignObject x="230" y="390" width="100" height="40">
+    <div xmlns="http://www.w3.org/1999/xhtml" class="box-text" style="font-family: Arial; font-size: 12px; font-weight: bold; color: white;">
+      Mermaid
+    </div>
+  </foreignObject>
+  <rect x="350" y="390" width="100" height="40" rx="8" ry="8" fill="#9B59B6" stroke="#8E44AD" stroke-width="2" />
+  <foreignObject x="350" y="390" width="100" height="40">
+    <div xmlns="http://www.w3.org/1999/xhtml" class="box-text" style="font-family: Arial; font-size: 12px; font-weight: bold; color: white;">
+      HTML
+    </div>
+  </foreignObject>
+  <rect x="470" y="390" width="100" height="40" rx="8" ry="8" fill="#9B59B6" stroke="#8E44AD" stroke-width="2" />
+  <foreignObject x="470" y="390" width="100" height="40">
+    <div xmlns="http://www.w3.org/1999/xhtml" class="box-text" style="font-family: Arial; font-size: 12px; font-weight: bold; color: white;">
+      Markdown
+    </div>
+  </foreignObject>
+  <line x1="120" y1="170" x2="320" y2="100" stroke="#555" stroke-width="2" />
+  <line x1="400" y1="130" x2="320" y2="170" stroke="#555" stroke-width="2" />
+  <line x1="400" y1="130" x2="520" y2="170" stroke="#555" stroke-width="2" />
+  <line x1="400" y1="130" x2="720" y2="170" stroke="#555" stroke-width="2" />
+  <line x1="390" y1="195" x2="450" y2="195" stroke="#555" stroke-width="2" />
+  <line x1="590" y1="195" x2="650" y2="195" stroke="#555" stroke-width="2" />
+  <line x1="320" y1="220" x2="120" y2="280" stroke="#555" stroke-width="2" />
+  <line x1="520" y1="220" x2="320" y2="280" stroke="#555" stroke-width="2" />
+  <line x1="720" y1="220" x2="520" y2="280" stroke="#555" stroke-width="2" />
+  <line x1="190" y1="305" x2="250" y2="305" stroke="#555" stroke-width="2" />
+  <line x1="390" y1="305" x2="450" y2="305" stroke="#555" stroke-width="2" />
+  <line x1="590" y1="305" x2="650" y2="305" stroke="#555" stroke-width="2" />
+  <line x1="720" y1="330" x2="280" y2="390" stroke="#555" stroke-width="2" />
+  <line x1="720" y1="330" x2="400" y2="390" stroke="#555" stroke-width="2" />
+  <line x1="720" y1="330" x2="520" y2="390" stroke="#555" stroke-width="2" />
+  <path d="M 720 220 C 760 250, 760 290, 720 330" fill="none" stroke="#555" stroke-width="2" stroke-dasharray="5,3" />
+  <foreignObject x="740" y="250" width="100" height="40">
+    <div xmlns="http://www.w3.org/1999/xhtml" class="loop-text" style="font-family: Arial; font-size: 10px; color: #555;">
+      Verification Loop
+    </div>
+  </foreignObject>
+  <path d="M 120 220 C 80 250, 80 290, 120 330" fill="none" stroke="#555" stroke-width="2" stroke-dasharray="5,3" />
+  <foreignObject x="0" y="250" width="100" height="40">
+    <div xmlns="http://www.w3.org/1999/xhtml" class="loop-text" style="font-family: Arial; font-size: 10px; color: #555;">
+      Exploration Loop
+    </div>
+  </foreignObject>
+</svg>
