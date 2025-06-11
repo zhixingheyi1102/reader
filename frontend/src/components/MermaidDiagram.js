@@ -16,6 +16,11 @@ const MermaidDiagram = ({ code }) => {
   const [mermaidInitialized, setMermaidInitialized] = useState(false);
   const containerRef = useRef(null);
   const diagramRef = useRef(null);
+  const copyTimeoutRef = useRef(null);
+
+  // 使用useRef来保存事件处理函数的引用
+  const handleMouseMoveRef = useRef(null);
+  const handleMouseUpRef = useRef(null);
 
   // 安全的状态更新函数
   const safeSetState = useCallback((setter, value) => {
@@ -71,32 +76,71 @@ const MermaidDiagram = ({ code }) => {
     }
   }, [position]);
 
-  // 拖拽过程
-  const handleMouseMove = useCallback((e) => {
-    if (isDragging) {
-      setPosition({
-        x: e.clientX - dragStart.x,
-        y: e.clientY - dragStart.y
-      });
-    }
+  // 创建事件处理函数
+  useEffect(() => {
+    handleMouseMoveRef.current = (e) => {
+      if (isDragging) {
+        setPosition({
+          x: e.clientX - dragStart.x,
+          y: e.clientY - dragStart.y
+        });
+      }
+    };
+
+    handleMouseUpRef.current = () => {
+      setIsDragging(false);
+    };
   }, [isDragging, dragStart]);
 
-  // 拖拽结束
-  const handleMouseUp = useCallback(() => {
-    setIsDragging(false);
-  }, []);
-
-  // 添加全局鼠标事件监听
+  // 管理事件监听器
   useEffect(() => {
+    // 使用局部变量存储事件处理函数的引用，避免闭包问题
+    let localHandleMouseMove = null;
+    let localHandleMouseUp = null;
+    
+    const handleMouseMove = (e) => {
+      if (handleMouseMoveRef.current) {
+        handleMouseMoveRef.current(e);
+      }
+    };
+
+    const handleMouseUp = () => {
+      if (handleMouseUpRef.current) {
+        handleMouseUpRef.current();
+      }
+    };
+
     if (isDragging) {
-      document.addEventListener('mousemove', handleMouseMove);
-      document.addEventListener('mouseup', handleMouseUp);
-      return () => {
-        document.removeEventListener('mousemove', handleMouseMove);
-        document.removeEventListener('mouseup', handleMouseUp);
-      };
+      // 使用window.document确保获取全局document对象，并检查addEventListener方法是否存在
+      const globalDocument = window.document;
+      if (globalDocument && typeof globalDocument.addEventListener === 'function') {
+        localHandleMouseMove = handleMouseMove;
+        localHandleMouseUp = handleMouseUp;
+        
+        globalDocument.addEventListener('mousemove', localHandleMouseMove, { passive: false });
+        globalDocument.addEventListener('mouseup', localHandleMouseUp, { passive: false });
+      }
     }
-  }, [isDragging, handleMouseMove, handleMouseUp]);
+
+    // 清理函数 - 添加多重安全检查
+    return () => {
+      try {
+        // 使用window.document确保获取全局document对象
+        const globalDocument = window.document;
+        if (globalDocument && typeof globalDocument.removeEventListener === 'function') {
+          if (localHandleMouseMove) {
+            globalDocument.removeEventListener('mousemove', localHandleMouseMove);
+          }
+          if (localHandleMouseUp) {
+            globalDocument.removeEventListener('mouseup', localHandleMouseUp);
+          }
+        }
+      } catch (error) {
+        // 静默处理清理错误，避免影响应用运行
+        console.warn('清理事件监听器时出错:', error);
+      }
+    };
+  }, [isDragging]);
 
   // 渲染图表
   const renderDiagram = useCallback(async () => {
@@ -263,12 +307,28 @@ const MermaidDiagram = ({ code }) => {
       await navigator.clipboard.writeText(code);
       safeSetState(setCopied, true);
       toast.success('Mermaid代码已复制到剪贴板');
-      setTimeout(() => safeSetState(setCopied, false), 2000);
+      
+      // 清理之前的timeout
+      if (copyTimeoutRef.current) {
+        clearTimeout(copyTimeoutRef.current);
+      }
+      
+      // 设置新的timeout
+      copyTimeoutRef.current = setTimeout(() => safeSetState(setCopied, false), 2000);
     } catch (error) {
       console.error('Failed to copy:', error);
       toast.error('复制失败，请手动复制');
     }
   }, [code, safeSetState]);
+
+  // 组件卸载时清理定时器
+  useEffect(() => {
+    return () => {
+      if (copyTimeoutRef.current) {
+        clearTimeout(copyTimeoutRef.current);
+      }
+    };
+  }, []);
 
   if (!code) {
     return (

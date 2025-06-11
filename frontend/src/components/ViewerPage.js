@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import ReactMarkdown from 'react-markdown';
 import toast from 'react-hot-toast';
@@ -27,6 +27,15 @@ const ViewerPage = () => {
   // 新增：文档查看模式 - 'markdown' 或 'pdf'
   const [viewMode, setViewMode] = useState('markdown');
   const [isPdfFile, setIsPdfFile] = useState(false);
+
+  // 分割面板相关状态
+  const [leftPanelWidth, setLeftPanelWidth] = useState(67); // 百分比
+  const [isDragging, setIsDragging] = useState(false);
+  const containerRef = useRef(null);
+
+  // 使用useRef来保存事件处理函数的引用
+  const handleMouseMoveRef = useRef(null);
+  const handleMouseUpRef = useRef(null);
 
   useEffect(() => {
     loadDocument();
@@ -92,6 +101,97 @@ const ViewerPage = () => {
       if (interval) clearInterval(interval);
     };
   }, [mindmapStatus, simpleMindmapStatus, documentId]);
+
+  // 拖拽处理函数
+  const handleMouseDown = useCallback((e) => {
+    setIsDragging(true);
+    e.preventDefault();
+  }, []);
+
+  // 创建事件处理函数
+  useEffect(() => {
+    handleMouseMoveRef.current = (e) => {
+      if (!isDragging || !containerRef.current) return;
+      
+      const container = containerRef.current;
+      const containerRect = container.getBoundingClientRect();
+      const containerWidth = containerRect.width;
+      const mouseX = e.clientX - containerRect.left;
+      
+      const newLeftWidth = (mouseX / containerWidth) * 100;
+      const minWidth = 20;
+      const maxWidth = 80;
+      
+      if (newLeftWidth >= minWidth && newLeftWidth <= maxWidth) {
+        setLeftPanelWidth(newLeftWidth);
+      }
+    };
+
+    handleMouseUpRef.current = () => {
+      setIsDragging(false);
+    };
+  }, [isDragging]);
+
+  // 管理事件监听器
+  useEffect(() => {
+    // 使用局部变量存储事件处理函数的引用，避免闭包问题
+    let localHandleMouseMove = null;
+    let localHandleMouseUp = null;
+    
+    const handleMouseMove = (e) => {
+      if (handleMouseMoveRef.current) {
+        handleMouseMoveRef.current(e);
+      }
+    };
+
+    const handleMouseUp = () => {
+      if (handleMouseUpRef.current) {
+        handleMouseUpRef.current();
+      }
+    };
+
+    if (isDragging) {
+      // 使用window.document确保获取全局document对象，并检查addEventListener方法是否存在
+      const globalDocument = window.document;
+      if (globalDocument && typeof globalDocument.addEventListener === 'function') {
+        localHandleMouseMove = handleMouseMove;
+        localHandleMouseUp = handleMouseUp;
+        
+        globalDocument.addEventListener('mousemove', localHandleMouseMove, { passive: false });
+        globalDocument.addEventListener('mouseup', localHandleMouseUp, { passive: false });
+        
+        if (globalDocument.body) {
+          globalDocument.body.style.cursor = 'col-resize';
+          globalDocument.body.style.userSelect = 'none';
+        }
+      }
+    }
+
+    // 清理函数 - 添加多重安全检查
+    return () => {
+      try {
+        // 使用window.document确保获取全局document对象
+        const globalDocument = window.document;
+        if (globalDocument && typeof globalDocument.removeEventListener === 'function') {
+          if (localHandleMouseMove) {
+            globalDocument.removeEventListener('mousemove', localHandleMouseMove);
+          }
+          if (localHandleMouseUp) {
+            globalDocument.removeEventListener('mouseup', localHandleMouseUp);
+          }
+        }
+        
+        // 重置样式
+        if (globalDocument && globalDocument.body) {
+          globalDocument.body.style.cursor = '';
+          globalDocument.body.style.userSelect = '';
+        }
+      } catch (error) {
+        // 静默处理清理错误，避免影响应用运行
+        console.warn('清理事件监听器时出错:', error);
+      }
+    };
+  }, [isDragging]);
 
   const loadDocument = async () => {
     try {
@@ -356,13 +456,19 @@ const ViewerPage = () => {
     }
 
     return (
-      <div className="w-full h-full">
+      <div className="w-full h-full bg-white">
         <embed
           src={`data:application/pdf;base64,${pdfBase64}`}
           type="application/pdf"
           width="100%"
-          height="800px"
-          className="border rounded-lg"
+          height="100%"
+          className="border-0 rounded-none block"
+          style={{ 
+            minHeight: '100%',
+            margin: 0,
+            padding: 0,
+            display: 'block'
+          }}
         />
       </div>
     );
@@ -373,27 +479,27 @@ const ViewerPage = () => {
     if (!isPdfFile) return null;
 
     return (
-      <div className="flex bg-gray-100 p-1 rounded-lg mb-6">
+      <div className="flex bg-gray-100 p-0.5 rounded mb-2">
         <button
           onClick={() => setViewMode('markdown')}
-          className={`flex-1 flex items-center justify-center px-4 py-2 rounded-md text-sm font-medium transition-all ${
+          className={`flex-1 flex items-center justify-center px-2 py-1 rounded text-xs font-medium transition-all ${
             viewMode === 'markdown'
               ? 'bg-white text-blue-600 shadow-sm'
               : 'text-gray-600 hover:text-gray-800'
           }`}
         >
-          <FileText className="h-4 w-4 mr-2" />
+          <FileText className="h-3 w-3 mr-1" />
           转换后的Markdown
         </button>
         <button
           onClick={() => setViewMode('pdf')}
-          className={`flex-1 flex items-center justify-center px-4 py-2 rounded-md text-sm font-medium transition-all ${
+          className={`flex-1 flex items-center justify-center px-2 py-1 rounded text-xs font-medium transition-all ${
             viewMode === 'pdf'
               ? 'bg-white text-red-600 shadow-sm'
               : 'text-gray-600 hover:text-gray-800'
           }`}
         >
-          <File className="h-4 w-4 mr-2" />
+          <File className="h-3 w-3 mr-1" />
           原始PDF文件
         </button>
       </div>
@@ -458,22 +564,25 @@ const ViewerPage = () => {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      {/* 主要内容区域 - 移除顶部工具栏，直接显示内容 */}
-      <div className="flex h-screen">
-        {/* 左侧文档阅读器 - 调整为67%宽度 */}
-        <div className="w-[67%] bg-white border-r shadow-sm overflow-hidden flex flex-col">
-          <div className="px-4 py-3 border-b bg-gray-50">
+    <div className="h-screen bg-gray-50 overflow-hidden flex flex-col">
+      {/* 可调整大小的分割容器 - 占据剩余空间 */}
+      <div ref={containerRef} className="flex flex-1 h-full">
+        {/* 左侧文档阅读器 - 动态宽度 */}
+        <div 
+          className="bg-white border-r shadow-sm overflow-hidden flex flex-col"
+          style={{ width: `${leftPanelWidth}%` }}
+        >
+          <div className="px-3 py-2 border-b bg-gray-50 flex-shrink-0">
             <div className="flex items-center justify-between">
-              <div className="flex items-center space-x-3">
+              <div className="flex items-center space-x-2">
                 <button
                   onClick={() => navigate('/')}
-                  className="inline-flex items-center px-2 py-1 text-sm text-gray-600 hover:text-gray-900 transition-colors"
+                  className="inline-flex items-center px-2 py-1 text-xs text-gray-600 hover:text-gray-900 transition-colors"
                 >
-                  <ArrowLeft className="w-4 h-4 mr-1" />
+                  <ArrowLeft className="w-3 h-3 mr-1" />
                   返回
                 </button>
-                <h2 className="text-base font-semibold text-gray-900">
+                <h2 className="text-sm font-semibold text-gray-900">
                   文档内容
                   {isPdfFile && (
                     <span className="ml-2 text-xs text-gray-500">
@@ -495,7 +604,7 @@ const ViewerPage = () => {
             {/* 切换按钮 */}
             <ViewModeToggle />
           </div>
-          <div className="flex-1 overflow-y-auto p-4">
+          <div className={`flex-1 ${viewMode === 'pdf' && isPdfFile ? 'overflow-hidden' : 'overflow-y-auto p-4'}`}>
             {viewMode === 'pdf' && isPdfFile ? (
               <PDFViewer pdfBase64={document.pdf_base64} />
             ) : (
@@ -526,9 +635,24 @@ const ViewerPage = () => {
           </div>
         </div>
 
-        {/* 右侧思维导图 - 调整为33%宽度 */}
-        <div className="w-[33%] bg-white overflow-hidden flex flex-col">
-          <div className="px-4 py-3 border-b bg-gray-50">
+        {/* 可拖拽的分隔线 */}
+        <div
+          className={`w-1 bg-gray-300 hover:bg-blue-500 cursor-col-resize flex-shrink-0 transition-colors ${
+            isDragging ? 'bg-blue-500' : ''
+          }`}
+          onMouseDown={handleMouseDown}
+        >
+          <div className="w-full h-full flex items-center justify-center">
+            <div className="w-0.5 h-8 bg-white opacity-50 rounded"></div>
+          </div>
+        </div>
+
+        {/* 右侧思维导图 - 动态宽度 */}
+        <div 
+          className="bg-white overflow-hidden flex flex-col"
+          style={{ width: `${100 - leftPanelWidth}%` }}
+        >
+          <div className="px-4 py-3 border-b bg-gray-50 flex-shrink-0">
             <div className="flex items-center justify-between">
               <h2 className="text-base font-semibold text-gray-900">思维导图</h2>
               <div className="flex items-center space-x-2">
