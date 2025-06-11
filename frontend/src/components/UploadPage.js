@@ -19,8 +19,8 @@ const UploadPage = () => {
     }
 
     // 验证文件类型
-    if (!file.name.endsWith('.md') && !file.name.endsWith('.txt')) {
-      toast.error('只支持 .md 和 .txt 文件');
+    if (!file.name.endsWith('.md') && !file.name.endsWith('.txt') && !file.name.endsWith('.pdf')) {
+      toast.error('只支持 .md、.txt 和 .pdf 文件');
       return;
     }
 
@@ -68,6 +68,7 @@ const UploadPage = () => {
     accept: {
       'text/markdown': ['.md'],
       'text/plain': ['.txt'],
+      'application/pdf': ['.pdf'],
     },
     multiple: false,
   });
@@ -77,10 +78,10 @@ const UploadPage = () => {
       <div className="max-w-2xl w-full">
         <div className="text-center mb-8">
           <h2 className="text-3xl font-bold text-gray-900 mb-4">
-            上传 Markdown 文件
+            上传文档文件
           </h2>
           <p className="text-lg text-gray-600">
-            支持 .md 和 .txt 格式文件，选择生成模式后自动生成智能思维导图
+            支持 .md、.txt 和 .pdf 格式文件，PDF文件将自动转换为Markdown，选择生成模式后自动生成智能思维导图
           </p>
         </div>
 
@@ -181,7 +182,7 @@ const UploadPage = () => {
                       拖拽文件到此处，或点击选择文件
                     </p>
                     <p className="text-sm text-gray-500 mb-2">
-                      支持 .md 和 .txt 文件，最大 10MB
+                      支持 .md、.txt 和 .pdf 文件，最大 10MB
                     </p>
                     <p className="text-xs text-gray-400">
                       当前选择：{selectedMode === 'simple' ? '快速简化模式' : '标准详细模式'}

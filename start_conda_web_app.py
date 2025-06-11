@@ -177,6 +177,42 @@ def start_backend():
         print_status(f"启动后端服务时出错: {e}", "ERROR")
         return None
 
+def find_npm():
+    """查找npm可执行文件"""
+    # 常见的npm路径
+    npm_paths = [
+        "npm",  # 系统PATH中
+        "npm.cmd",  # Windows
+        "npm.ps1",  # PowerShell
+        r"D:\nodejs\npm.cmd",  # 常见安装路径
+        r"D:\nodejs\npm.ps1",
+    ]
+    
+    for npm_path in npm_paths:
+        try:
+            result = subprocess.run([npm_path, "--version"], 
+                                  capture_output=True, text=True, timeout=10)
+            if result.returncode == 0:
+                print_status(f"找到npm: {npm_path} (版本: {result.stdout.strip()})", "SUCCESS")
+                return npm_path
+        except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
+            continue
+    
+    return None
+
+def install_nodejs_in_conda():
+    """在conda环境中安装Node.js"""
+    print_status("正在尝试安装Node.js到conda环境...", "INFO")
+    try:
+        subprocess.run([
+            "conda", "install", "-y", "nodejs", "npm", "-c", "conda-forge"
+        ], check=True, capture_output=True, text=True)
+        print_status("Node.js安装成功", "SUCCESS")
+        return True
+    except subprocess.CalledProcessError as e:
+        print_status(f"conda安装Node.js失败: {e}", "ERROR")
+        return False
+
 def start_frontend():
     """启动前端服务"""
     print_status("启动前端React服务...", "INFO")
@@ -186,16 +222,32 @@ def start_frontend():
         print_status("frontend 目录不存在!", "ERROR")
         return None
     
+    # 查找npm
+    npm_command = find_npm()
+    
+    if not npm_command:
+        print_status("未找到npm，尝试安装Node.js...", "WARNING")
+        if install_nodejs_in_conda():
+            npm_command = find_npm()
+        
+        if not npm_command:
+            print_status("无法找到或安装npm，跳过前端启动", "ERROR")
+            print_status("请手动安装Node.js: https://nodejs.org/", "INFO")
+            return None
+    
     try:
         # 检查node_modules是否存在
         if not (frontend_dir / "node_modules").exists():
             print_status("安装前端依赖...", "INFO")
-            subprocess.run(["npm", "install"], cwd=frontend_dir, check=True, capture_output=True)
+            result = subprocess.run([npm_command, "install"], 
+                                  cwd=frontend_dir, check=True, 
+                                  capture_output=True, text=True, timeout=300)
             print_status("前端依赖安装完成", "SUCCESS")
         
-        # 启动React开发服务器 - 只重定向前端输出以避免混乱
+        # 启动React开发服务器
+        print_status(f"使用 {npm_command} 启动前端服务...", "INFO")
         frontend_process = subprocess.Popen([
-            "npm", "start"
+            npm_command, "start"
         ], cwd=frontend_dir, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         
         # 等待前端服务启动
@@ -213,9 +265,16 @@ def start_frontend():
             
     except subprocess.CalledProcessError as e:
         print_status(f"启动前端服务时出错: {e}", "ERROR")
+        if hasattr(e, 'stdout') and e.stdout:
+            print_status(f"输出: {e.stdout}", "INFO")
+        if hasattr(e, 'stderr') and e.stderr:
+            print_status(f"错误: {e.stderr}", "ERROR")
         return None
-    except FileNotFoundError:
-        print_status("未找到 npm，请确保已安装 Node.js", "ERROR")
+    except subprocess.TimeoutExpired:
+        print_status("npm install超时，可能网络较慢", "ERROR")
+        return None
+    except Exception as e:
+        print_status(f"启动前端时发生意外错误: {e}", "ERROR")
         return None
 
 def open_browser():

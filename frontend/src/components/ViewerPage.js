@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import ReactMarkdown from 'react-markdown';
 import toast from 'react-hot-toast';
-import { ArrowLeft, Download, ExternalLink, RefreshCw, Play, Clock, CheckCircle, XCircle, Zap, BarChart3 } from 'lucide-react';
+import { ArrowLeft, Download, ExternalLink, RefreshCw, Play, Clock, CheckCircle, XCircle, Zap, BarChart3, FileText, File } from 'lucide-react';
 import axios from 'axios';
 import MermaidDiagram from './MermaidDiagram';
 
@@ -23,6 +23,10 @@ const ViewerPage = () => {
   const selectedMode = location.state?.selectedMode || 'simple';
   const [currentMindmapMode, setCurrentMindmapMode] = useState(selectedMode);
   const [autoStarted, setAutoStarted] = useState(false);
+  
+  // 新增：文档查看模式 - 'markdown' 或 'pdf'
+  const [viewMode, setViewMode] = useState('markdown');
+  const [isPdfFile, setIsPdfFile] = useState(false);
 
   useEffect(() => {
     loadDocument();
@@ -103,8 +107,19 @@ const ViewerPage = () => {
           content: docData.content,
           mermaid_code: docData.mermaid_code,
           mermaid_code_simple: docData.mermaid_code_simple,
-          filename: docData.filename
+          filename: docData.filename,
+          file_type: docData.file_type,
+          pdf_base64: docData.pdf_base64,
         });
+        
+        // 检查是否为PDF文件
+        const isPDF = docData.file_type === '.pdf';
+        setIsPdfFile(isPDF);
+        
+        // 如果是PDF文件，默认显示转换后的Markdown
+        if (isPDF) {
+          setViewMode('markdown');
+        }
         
         // 设置思维导图状态
         setMindmapStatus(docData.status);
@@ -180,6 +195,8 @@ const ViewerPage = () => {
     console.log('简化模式状态:', simpleMindmapStatus);
     console.log('当前模式:', currentMindmapMode);
     console.log('选择的模式:', selectedMode);
+    console.log('是否为PDF:', isPdfFile);
+    console.log('查看模式:', viewMode);
     console.log('========================');
     
     toast.success('调试信息已输出到控制台');
@@ -325,6 +342,64 @@ const ViewerPage = () => {
     );
   };
 
+  // PDF查看器组件
+  const PDFViewer = ({ pdfBase64 }) => {
+    if (!pdfBase64) {
+      return (
+        <div className="flex items-center justify-center h-96 bg-gray-100 rounded-lg">
+          <div className="text-center">
+            <File className="h-12 w-12 text-gray-400 mx-auto mb-2" />
+            <p className="text-gray-500">PDF文件不可用</p>
+          </div>
+        </div>
+      );
+    }
+
+    return (
+      <div className="w-full h-full">
+        <embed
+          src={`data:application/pdf;base64,${pdfBase64}`}
+          type="application/pdf"
+          width="100%"
+          height="800px"
+          className="border rounded-lg"
+        />
+      </div>
+    );
+  };
+
+  // 文档查看区域切换按钮
+  const ViewModeToggle = () => {
+    if (!isPdfFile) return null;
+
+    return (
+      <div className="flex bg-gray-100 p-1 rounded-lg mb-6">
+        <button
+          onClick={() => setViewMode('markdown')}
+          className={`flex-1 flex items-center justify-center px-4 py-2 rounded-md text-sm font-medium transition-all ${
+            viewMode === 'markdown'
+              ? 'bg-white text-blue-600 shadow-sm'
+              : 'text-gray-600 hover:text-gray-800'
+          }`}
+        >
+          <FileText className="h-4 w-4 mr-2" />
+          转换后的Markdown
+        </button>
+        <button
+          onClick={() => setViewMode('pdf')}
+          className={`flex-1 flex items-center justify-center px-4 py-2 rounded-md text-sm font-medium transition-all ${
+            viewMode === 'pdf'
+              ? 'bg-white text-red-600 shadow-sm'
+              : 'text-gray-600 hover:text-gray-800'
+          }`}
+        >
+          <File className="h-4 w-4 mr-2" />
+          原始PDF文件
+        </button>
+      </div>
+    );
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
@@ -384,136 +459,146 @@ const ViewerPage = () => {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      {/* 顶部工具栏 */}
-      <div className="bg-white border-b shadow-sm sticky top-0 z-10">
-        <div className="max-w-7xl mx-auto px-4 py-3">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center space-x-4">
-              <button
-                onClick={() => navigate('/')}
-                className="inline-flex items-center px-3 py-1.5 text-gray-600 hover:text-gray-900 transition-colors"
-              >
-                <ArrowLeft className="w-4 h-4 mr-1" />
-                返回
-              </button>
-              <div className="text-sm text-gray-500">
-                {document.filename && `${document.filename} • `}文档ID: {documentId}
-              </div>
-              <MindmapStatusDisplay />
-            </div>
-            
-            <div className="flex items-center space-x-3">
-              <button
-                onClick={handleDownloadMarkdown}
-                className="inline-flex items-center px-3 py-1.5 text-sm bg-green-600 text-white rounded-md hover:bg-green-700 transition-colors"
-              >
-                <Download className="w-4 h-4 mr-1" />
-                下载MD
-              </button>
-              
-              {document.mermaid_code && (
-                <button
-                  onClick={() => handleDownloadMermaid('standard')}
-                  className="inline-flex items-center px-3 py-1.5 text-sm bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors"
-                >
-                  <Download className="w-4 h-4 mr-1" />
-                  下载详细图表
-                </button>
-              )}
-              
-              {document.mermaid_code_simple && (
-                <button
-                  onClick={() => handleDownloadMermaid('simple')}
-                  className="inline-flex items-center px-3 py-1.5 text-sm bg-purple-600 text-white rounded-md hover:bg-purple-700 transition-colors"
-                >
-                  <Download className="w-4 h-4 mr-1" />
-                  下载快速图表
-                </button>
-              )}
-              
-              {(document.mermaid_code || document.mermaid_code_simple) && (
-                <button
-                  onClick={() => {
-                    const mode = currentMindmapMode;
-                    const hasCode = mode === 'simple' ? document.mermaid_code_simple : document.mermaid_code;
-                    if (hasCode) {
-                      handleOpenMermaidEditor(mode);
-                    }
-                  }}
-                  className="inline-flex items-center px-3 py-1.5 text-sm bg-orange-600 text-white rounded-md hover:bg-orange-700 transition-colors"
-                >
-                  <ExternalLink className="w-4 h-4 mr-1" />
-                  编辑{currentMindmapMode === 'simple' ? '快速' : '详细'}图表
-                </button>
-              )}
-              
-              <button
-                onClick={handleDebugMindmap}
-                className="inline-flex items-center px-3 py-1.5 text-sm bg-gray-600 text-white rounded-md hover:bg-gray-700 transition-colors"
-                title="调试思维导图状态"
-              >
-                🐛 调试
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* 主要内容区域 */}
-      <div className="max-w-7xl mx-auto flex h-[calc(100vh-64px)]">
-        {/* 左侧Markdown阅读器 */}
-        <div className="w-2/3 bg-white border-r shadow-sm overflow-hidden flex flex-col">
-          <div className="px-6 py-4 border-b bg-gray-50">
-            <h2 className="text-lg font-semibold text-gray-900">文档内容</h2>
-          </div>
-          <div className="flex-1 overflow-y-auto p-6">
-            <div className="prose prose-sm sm:prose lg:prose-lg xl:prose-xl max-w-none">
-              <ReactMarkdown
-                components={{
-                  h1: ({node, ...props}) => <h1 className="text-3xl font-bold mb-4 text-gray-900 border-b pb-2" {...props} />,
-                  h2: ({node, ...props}) => <h2 className="text-2xl font-semibold mb-3 text-gray-800 mt-6" {...props} />,
-                  h3: ({node, ...props}) => <h3 className="text-xl font-medium mb-2 text-gray-700 mt-4" {...props} />,
-                  p: ({node, ...props}) => <p className="mb-4 text-gray-600 leading-relaxed" {...props} />,
-                  ul: ({node, ...props}) => <ul className="mb-4 ml-6 list-disc" {...props} />,
-                  ol: ({node, ...props}) => <ol className="mb-4 ml-6 list-decimal" {...props} />,
-                  li: ({node, ...props}) => <li className="mb-1 text-gray-600" {...props} />,
-                  blockquote: ({node, ...props}) => (
-                    <blockquote className="border-l-4 border-blue-500 pl-4 py-2 mb-4 bg-blue-50 text-gray-700 italic" {...props} />
-                  ),
-                  code: ({node, inline, ...props}) => 
-                    inline 
-                      ? <code className="bg-gray-100 px-1 py-0.5 rounded text-sm font-mono text-red-600" {...props} />
-                      : <code className="block bg-gray-900 text-green-400 p-4 rounded-lg overflow-x-auto text-sm font-mono" {...props} />,
-                  pre: ({node, ...props}) => <pre className="mb-4 overflow-x-auto" {...props} />,
-                }}
-              >
-                {document.content}
-              </ReactMarkdown>
-            </div>
-          </div>
-        </div>
-
-        {/* 右侧思维导图 */}
-        <div className="w-1/3 bg-white overflow-hidden flex flex-col">
-          <div className="px-6 py-4 border-b bg-gray-50">
+      {/* 主要内容区域 - 移除顶部工具栏，直接显示内容 */}
+      <div className="flex h-screen">
+        {/* 左侧文档阅读器 - 调整为67%宽度 */}
+        <div className="w-[67%] bg-white border-r shadow-sm overflow-hidden flex flex-col">
+          <div className="px-4 py-3 border-b bg-gray-50">
             <div className="flex items-center justify-between">
-              <h2 className="text-lg font-semibold text-gray-900">思维导图</h2>
+              <div className="flex items-center space-x-3">
+                <button
+                  onClick={() => navigate('/')}
+                  className="inline-flex items-center px-2 py-1 text-sm text-gray-600 hover:text-gray-900 transition-colors"
+                >
+                  <ArrowLeft className="w-4 h-4 mr-1" />
+                  返回
+                </button>
+                <h2 className="text-base font-semibold text-gray-900">
+                  文档内容
+                  {isPdfFile && (
+                    <span className="ml-2 text-xs text-gray-500">
+                      ({viewMode === 'pdf' ? '原始PDF' : '转换后的Markdown'})
+                    </span>
+                  )}
+                </h2>
+              </div>
               <div className="flex items-center space-x-2">
-                <span className="text-xs text-gray-500">
-                  {currentMindmapMode === 'simple' ? '快速模式' : '详细模式'}
-                </span>
+                <button
+                  onClick={handleDownloadMarkdown}
+                  className="inline-flex items-center px-2 py-1 text-xs bg-green-600 text-white rounded hover:bg-green-700 transition-colors"
+                >
+                  <Download className="w-3 h-3 mr-1" />
+                  下载MD
+                </button>
+              </div>
+            </div>
+            {/* 切换按钮 */}
+            <ViewModeToggle />
+          </div>
+          <div className="flex-1 overflow-y-auto p-4">
+            {viewMode === 'pdf' && isPdfFile ? (
+              <PDFViewer pdfBase64={document.pdf_base64} />
+            ) : (
+              <div className="prose prose-sm max-w-none">
+                <ReactMarkdown
+                  components={{
+                    h1: ({node, ...props}) => <h1 className="text-2xl font-bold mb-3 text-gray-900 border-b pb-2" {...props} />,
+                    h2: ({node, ...props}) => <h2 className="text-xl font-semibold mb-2 text-gray-800 mt-4" {...props} />,
+                    h3: ({node, ...props}) => <h3 className="text-lg font-medium mb-2 text-gray-700 mt-3" {...props} />,
+                    p: ({node, ...props}) => <p className="mb-3 text-gray-600 leading-relaxed text-sm" {...props} />,
+                    ul: ({node, ...props}) => <ul className="mb-3 ml-4 list-disc" {...props} />,
+                    ol: ({node, ...props}) => <ol className="mb-3 ml-4 list-decimal" {...props} />,
+                    li: ({node, ...props}) => <li className="mb-1 text-gray-600 text-sm" {...props} />,
+                    blockquote: ({node, ...props}) => (
+                      <blockquote className="border-l-4 border-blue-500 pl-3 py-2 mb-3 bg-blue-50 text-gray-700 italic text-sm" {...props} />
+                    ),
+                    code: ({node, inline, ...props}) => 
+                      inline 
+                        ? <code className="bg-gray-100 px-1 py-0.5 rounded text-xs font-mono text-red-600" {...props} />
+                        : <code className="block bg-gray-900 text-green-400 p-3 rounded-lg overflow-x-auto text-xs font-mono" {...props} />,
+                    pre: ({node, ...props}) => <pre className="mb-3 overflow-x-auto" {...props} />,
+                  }}
+                >
+                  {document.content}
+                </ReactMarkdown>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* 右侧思维导图 - 调整为33%宽度 */}
+        <div className="w-[33%] bg-white overflow-hidden flex flex-col">
+          <div className="px-4 py-3 border-b bg-gray-50">
+            <div className="flex items-center justify-between">
+              <h2 className="text-base font-semibold text-gray-900">思维导图</h2>
+              <div className="flex items-center space-x-2">
+                <MindmapStatusDisplay />
+                <div className="flex items-center space-x-1">
+                  {document.mermaid_code && (
+                    <button
+                      onClick={() => handleDownloadMermaid('standard')}
+                      className="inline-flex items-center px-2 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors"
+                    >
+                      <Download className="w-3 h-3 mr-1" />
+                      详细
+                    </button>
+                  )}
+                  
+                  {document.mermaid_code_simple && (
+                    <button
+                      onClick={() => handleDownloadMermaid('simple')}
+                      className="inline-flex items-center px-2 py-1 text-xs bg-purple-600 text-white rounded hover:bg-purple-700 transition-colors"
+                    >
+                      <Download className="w-3 h-3 mr-1" />
+                      快速
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+            <div className="flex items-center justify-between mt-2">
+              <div className="flex items-center space-x-1 text-xs text-gray-500">
+                <span>{currentMindmapMode === 'simple' ? '快速模式' : '详细模式'}</span>
                 {autoStarted && (
-                  <span className="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded">
+                  <span className="bg-blue-100 text-blue-700 px-2 py-1 rounded">
                     自动生成中
                   </span>
                 )}
               </div>
+              {(document.mermaid_code || document.mermaid_code_simple) && (
+                <div className="flex space-x-1">
+                  {document.mermaid_code && (
+                    <button
+                      onClick={() => setCurrentMindmapMode('standard')}
+                      className={`px-2 py-1 text-xs rounded transition-colors ${
+                        currentMindmapMode === 'standard'
+                          ? 'bg-blue-100 text-blue-700 border border-blue-300'
+                          : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                      }`}
+                    >
+                      详细版本
+                    </button>
+                  )}
+                  {document.mermaid_code_simple && (
+                    <button
+                      onClick={() => setCurrentMindmapMode('simple')}
+                      className={`px-2 py-1 text-xs rounded transition-colors ${
+                        currentMindmapMode === 'simple'
+                          ? 'bg-green-100 text-green-700 border border-green-300'
+                          : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                      }`}
+                    >
+                      快速版本
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
           </div>
           <div className="flex-1 overflow-hidden">
             {((currentMindmapMode === 'standard' && mindmapStatus === 'completed' && document.mermaid_code) ||
               (currentMindmapMode === 'simple' && simpleMindmapStatus === 'completed' && document.mermaid_code_simple)) ? (
-              <div className="h-full overflow-auto p-4">
+              <div className="h-full overflow-hidden">
                 <MermaidDiagram 
                   code={currentMindmapMode === 'simple' ? document.mermaid_code_simple : document.mermaid_code} 
                 />
@@ -523,136 +608,100 @@ const ViewerPage = () => {
               <div className="flex items-center justify-center h-full">
                 <div className="text-center">
                   <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
-                  <p className="text-lg text-gray-700 mb-2">
+                  <p className="text-base text-gray-700 mb-2">
                     正在生成{currentMindmapMode === 'simple' ? '快速' : '详细'}思维导图...
                   </p>
-                  <p className="text-sm text-gray-500">
+                  <p className="text-xs text-gray-500">
                     {currentMindmapMode === 'simple' ? '预计1-2分钟完成' : '这可能需要3-5分钟时间'}
                   </p>
-                  <div className="mt-4 text-xs text-gray-400">
+                  <div className="mt-3 text-xs text-gray-400">
                     根据上传时的选择自动生成
                   </div>
                 </div>
               </div>
             ) : ((currentMindmapMode === 'standard' && mindmapStatus === 'error') ||
                   (currentMindmapMode === 'simple' && simpleMindmapStatus === 'error')) ? (
-              <div className="flex items-center justify-center h-full p-6">
-                <div className="text-center">
-                  <XCircle className="w-12 h-12 text-red-500 mx-auto mb-4" />
-                  <p className="text-lg text-red-700 mb-2">生成失败</p>
-                  <p className="text-sm text-gray-600 mb-4">
-                    {currentMindmapMode === 'simple' ? simpleMindmapError : mindmapError}
-                  </p>
-                  <div className="space-y-2">
+              <div className="flex items-center justify-center h-full">
+                <div className="text-center max-w-md px-4">
+                  <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+                    <h3 className="text-base font-semibold text-red-800 mb-2">生成失败</h3>
+                    <p className="text-sm text-red-600 mb-3">
+                      {currentMindmapMode === 'simple' ? simpleMindmapError : mindmapError}
+                    </p>
                     <button
                       onClick={() => startMindmapGeneration(currentMindmapMode)}
-                      className="inline-flex items-center px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 transition-colors"
+                      className="inline-flex items-center px-3 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 transition-colors text-sm"
                     >
-                      <RefreshCw className="w-4 h-4 mr-2" />
-                      重新生成
-                    </button>
-                    <div className="mt-2">
-                      <button
-                        onClick={() => {
-                          const otherMode = currentMindmapMode === 'simple' ? 'standard' : 'simple';
-                          setCurrentMindmapMode(otherMode);
-                          startMindmapGeneration(otherMode);
-                        }}
-                        className="inline-flex items-center px-3 py-1.5 text-sm bg-gray-600 text-white rounded-md hover:bg-gray-700 transition-colors"
-                      >
-                        {currentMindmapMode === 'simple' ? <BarChart3 className="w-3 h-3 mr-1" /> : <Zap className="w-3 h-3 mr-1" />}
-                        尝试{currentMindmapMode === 'simple' ? '详细' : '快速'}模式
-                      </button>
-                    </div>
-                    <button
-                      onClick={handleDebugMindmap}
-                      className="block mx-auto text-xs text-gray-500 hover:text-gray-700"
-                    >
-                      查看调试信息
+                      <RefreshCw className="w-4 h-4 mr-1" />
+                      重试生成
                     </button>
                   </div>
                 </div>
               </div>
             ) : (
-              <div className="flex items-center justify-center h-full p-6">
-                <div className="text-center">
-                  <div className="w-12 h-12 bg-gray-200 rounded-full mx-auto mb-4 flex items-center justify-center">
-                    {currentMindmapMode === 'simple' ? (
-                      <Zap className="w-6 h-6 text-green-600" />
-                    ) : (
-                      <BarChart3 className="w-6 h-6 text-blue-600" />
-                    )}
-                  </div>
-                  <p className="text-lg text-gray-700 mb-2">准备生成思维导图</p>
-                  <p className="text-sm text-gray-500 mb-4">
-                    当前模式：{currentMindmapMode === 'simple' ? '快速简化' : '标准详细'}
-                  </p>
-                  
-                  {!autoStarted && (
-                    <div className="space-y-3">
+              <div className="flex items-center justify-center h-full">
+                <div className="text-center max-w-md px-4">
+                  <div className="bg-gray-50 border border-gray-200 rounded-lg p-6">
+                    <h3 className="text-base font-semibold text-gray-800 mb-3">开始生成思维导图</h3>
+                    
+                    <div className="grid grid-cols-1 gap-3 mb-4">
                       <button
-                        onClick={() => startMindmapGeneration(currentMindmapMode)}
-                        className={`w-full inline-flex items-center justify-center px-4 py-3 rounded-md transition-colors ${
-                          currentMindmapMode === 'simple' 
-                            ? 'bg-green-600 text-white hover:bg-green-700' 
-                            : 'bg-blue-600 text-white hover:bg-blue-700'
-                        }`}
+                        onClick={() => startMindmapGeneration('simple')}
+                        className="flex items-center justify-center px-4 py-3 bg-green-600 text-white rounded-md hover:bg-green-700 transition-colors"
+                        disabled={simpleMindmapStatus === 'generating'}
                       >
-                        <Play className="w-4 h-4 mr-2" />
-                        开始生成{currentMindmapMode === 'simple' ? '快速' : '详细'}思维导图
+                        <Zap className="w-4 h-4 mr-2" />
+                        <div className="text-left">
+                          <div className="text-sm font-medium">快速模式</div>
+                          <div className="text-xs opacity-90">1-2分钟生成</div>
+                        </div>
                       </button>
                       
                       <button
-                        onClick={() => {
-                          const otherMode = currentMindmapMode === 'simple' ? 'standard' : 'simple';
-                          setCurrentMindmapMode(otherMode);
-                        }}
-                        className="w-full inline-flex items-center justify-center px-3 py-2 text-sm bg-gray-100 text-gray-700 rounded-md hover:bg-gray-200 transition-colors"
+                        onClick={() => startMindmapGeneration('standard')}
+                        className="flex items-center justify-center px-4 py-3 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors"
+                        disabled={mindmapStatus === 'generating'}
                       >
-                        {currentMindmapMode === 'simple' ? <BarChart3 className="w-3 h-3 mr-1" /> : <Zap className="w-3 h-3 mr-1" />}
-                        切换到{currentMindmapMode === 'simple' ? '详细' : '快速'}模式
+                        <BarChart3 className="w-4 h-4 mr-2" />
+                        <div className="text-left">
+                          <div className="text-sm font-medium">详细模式</div>
+                          <div className="text-xs opacity-90">3-5分钟生成</div>
+                        </div>
                       </button>
                     </div>
-                  )}
-                  
-                  {(document.mermaid_code || document.mermaid_code_simple) && (
-                    <div className="border-t pt-4 mt-4">
-                      <p className="text-sm text-gray-600 mb-3">查看已生成的思维导图：</p>
-                      <div className="flex space-x-2">
-                        {document.mermaid_code && (
-                          <button
-                            onClick={() => setCurrentMindmapMode('standard')}
-                            className={`px-3 py-1.5 text-xs rounded transition-colors ${
-                              currentMindmapMode === 'standard'
-                                ? 'bg-blue-100 text-blue-700 border border-blue-300'
-                                : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                            }`}
-                          >
-                            详细版本
-                          </button>
-                        )}
-                        {document.mermaid_code_simple && (
-                          <button
-                            onClick={() => setCurrentMindmapMode('simple')}
-                            className={`px-3 py-1.5 text-xs rounded transition-colors ${
-                              currentMindmapMode === 'simple'
-                                ? 'bg-green-100 text-green-700 border border-green-300'
-                                : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                            }`}
-                          >
-                            快速版本
-                          </button>
-                        )}
+                    
+                    {(document.mermaid_code || document.mermaid_code_simple) && (
+                      <div className="border-t pt-3 mt-3">
+                        <p className="text-xs text-gray-600 mb-2">查看已生成的思维导图：</p>
+                        <div className="flex space-x-2">
+                          {document.mermaid_code && (
+                            <button
+                              onClick={() => setCurrentMindmapMode('standard')}
+                              className={`px-2 py-1 text-xs rounded transition-colors ${
+                                currentMindmapMode === 'standard'
+                                  ? 'bg-blue-100 text-blue-700 border border-blue-300'
+                                  : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                              }`}
+                            >
+                              详细版本
+                            </button>
+                          )}
+                          {document.mermaid_code_simple && (
+                            <button
+                              onClick={() => setCurrentMindmapMode('simple')}
+                              className={`px-2 py-1 text-xs rounded transition-colors ${
+                                currentMindmapMode === 'simple'
+                                  ? 'bg-green-100 text-green-700 border border-green-300'
+                                  : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                              }`}
+                            >
+                              快速版本
+                            </button>
+                          )}
+                        </div>
                       </div>
-                    </div>
-                  )}
-                  
-                  <button
-                    onClick={handleDebugMindmap}
-                    className="block mx-auto text-xs text-gray-500 hover:text-gray-700 mt-4"
-                  >
-                    查看当前状态
-                  </button>
+                    )}
+                  </div>
                 </div>
               </div>
             )}

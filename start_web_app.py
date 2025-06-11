@@ -36,13 +36,24 @@ def install_dependencies():
 def check_node_and_npm():
     """检查Node.js和npm是否安装"""
     try:
-        subprocess.run(["node", "--version"], check=True, capture_output=True)
-        subprocess.run(["npm", "--version"], check=True, capture_output=True)
-        print("✅ Node.js 和 npm 已安装")
+        # 检查Node.js
+        result = subprocess.run(["node", "--version"], capture_output=True, text=True, timeout=10)
+        if result.returncode != 0:
+            raise subprocess.CalledProcessError(result.returncode, "node")
+        node_version = result.stdout.strip()
+        
+        # 检查npm
+        result = subprocess.run(["npm", "--version"], capture_output=True, text=True, timeout=10)
+        if result.returncode != 0:
+            raise subprocess.CalledProcessError(result.returncode, "npm")
+        npm_version = result.stdout.strip()
+        
+        print(f"✅ Node.js {node_version} 和 npm {npm_version} 已安装")
         return True
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        print("❌ 需要安装 Node.js 和 npm")
-        print("请访问 https://nodejs.org/ 下载安装 Node.js")
+    except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired) as e:
+        print(f"❌ 未找到 npm，请确保已安装 Node.js")
+        print(f"错误详情: {e}")
+        print("如果您确定npm已安装，请尝试在命令行中运行: npm --version")
         return False
 
 def setup_frontend():

@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import mermaid from 'mermaid';
-import { AlertCircle, Copy, Check } from 'lucide-react';
+import { AlertCircle, Copy, Check, ZoomIn, ZoomOut, RotateCcw, Move } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 const MermaidDiagram = ({ code }) => {
@@ -9,19 +9,26 @@ const MermaidDiagram = ({ code }) => {
   const [copied, setCopied] = useState(false);
   const [isRendering, setIsRendering] = useState(false);
   const [hasRendered, setHasRendered] = useState(false);
+  const [scale, setScale] = useState(1);
+  const [position, setPosition] = useState({ x: 0, y: 0 });
+  const [isDragging, setIsDragging] = useState(false);
+  const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
+  const [mermaidInitialized, setMermaidInitialized] = useState(false);
   const containerRef = useRef(null);
-  const isMountedRef = useRef(true); // 添加挂载状态追踪
+  const diagramRef = useRef(null);
 
   // 安全的状态更新函数
   const safeSetState = useCallback((setter, value) => {
-    if (isMountedRef.current) {
+    try {
       setter(value);
+    } catch (error) {
+      console.warn('状态更新失败:', error);
     }
   }, []);
 
   // 安全的DOM操作函数
   const safeDOMOperation = useCallback((operation) => {
-    if (isMountedRef.current && containerRef.current) {
+    if (containerRef.current) {
       try {
         return operation();
       } catch (error) {
@@ -32,323 +39,337 @@ const MermaidDiagram = ({ code }) => {
     return false;
   }, []);
 
-  useEffect(() => {
-    // 组件挂载时设置为true
-    isMountedRef.current = true;
-    
-    // 初始化Mermaid配置
-    console.log('初始化Mermaid配置...');
-    mermaid.initialize({
-      startOnLoad: false,
-      theme: 'default',
-      securityLevel: 'loose',
-      fontFamily: 'trebuchet ms, verdana, arial, sans-serif',
-      fontSize: 14,
-      logLevel: 'error', // 减少日志输出
-      flowchart: {
-        htmlLabels: true,
-        curve: 'basis',
-        useMaxWidth: true,
-      },
-      mindmap: {
-        useMaxWidth: true,
-        padding: 10,
-        maxNodeSizeX: 200,
-        maxNodeSizeY: 100,
-      },
-      themeVariables: {
-        primaryColor: '#3b82f6',
-        primaryTextColor: '#1f2937',
-        primaryBorderColor: '#2563eb',
-        lineColor: '#6b7280',
-        secondaryColor: '#f3f4f6',
-        tertiaryColor: '#e5e7eb',
-        backgroundColorPrimary: '#ffffff',
-        backgroundColorSecondary: '#f9fafb',
-        backgroundColorTertiary: '#ffffff',
-        mainBkg: '#ffffff',
-        secondBkg: '#f3f4f6',
-        tertiaryBkg: '#e5e7eb',
-      },
-    });
-    console.log('Mermaid配置完成');
-
-    // 清理函数
-    return () => {
-      isMountedRef.current = false;
-    };
+  // 缩放控制函数
+  const handleZoomIn = useCallback(() => {
+    setScale(prev => Math.min(prev * 1.2, 3));
   }, []);
 
+  const handleZoomOut = useCallback(() => {
+    setScale(prev => Math.max(prev / 1.2, 0.3));
+  }, []);
+
+  const handleReset = useCallback(() => {
+    setScale(1);
+    setPosition({ x: 0, y: 0 });
+  }, []);
+
+  // 鼠标滚轮缩放
+  const handleWheel = useCallback((e) => {
+    e.preventDefault();
+    const delta = e.deltaY > 0 ? 0.9 : 1.1;
+    setScale(prev => Math.max(0.3, Math.min(3, prev * delta)));
+  }, []);
+
+  // 拖拽开始
+  const handleMouseDown = useCallback((e) => {
+    if (e.button === 0) { // 左键
+      setIsDragging(true);
+      setDragStart({
+        x: e.clientX - position.x,
+        y: e.clientY - position.y
+      });
+    }
+  }, [position]);
+
+  // 拖拽过程
+  const handleMouseMove = useCallback((e) => {
+    if (isDragging) {
+      setPosition({
+        x: e.clientX - dragStart.x,
+        y: e.clientY - dragStart.y
+      });
+    }
+  }, [isDragging, dragStart]);
+
+  // 拖拽结束
+  const handleMouseUp = useCallback(() => {
+    setIsDragging(false);
+  }, []);
+
+  // 添加全局鼠标事件监听
   useEffect(() => {
-    if (!code || !isMountedRef.current) return;
+    if (isDragging) {
+      document.addEventListener('mousemove', handleMouseMove);
+      document.addEventListener('mouseup', handleMouseUp);
+      return () => {
+        document.removeEventListener('mousemove', handleMouseMove);
+        document.removeEventListener('mouseup', handleMouseUp);
+      };
+    }
+  }, [isDragging, handleMouseMove, handleMouseUp]);
 
-    const renderDiagram = async () => {
-      // 检查组件是否仍然挂载
-      if (!isMountedRef.current) return;
+  // 渲染图表
+  const renderDiagram = useCallback(async () => {
+    if (!code || isRendering) return;
 
-      try {
-        safeSetState(setError, null);
-        safeSetState(setIsRendering, true);
-        safeSetState(setHasRendered, false);
-        
-        console.log('开始渲染Mermaid图表...');
-        console.log('代码内容:', code);
-        
-        // 安全地清空容器
-        safeDOMOperation(() => {
-          if (containerRef.current) {
-            // 使用更安全的方式清空内容
-            while (containerRef.current.firstChild) {
-              containerRef.current.removeChild(containerRef.current.firstChild);
-            }
+    console.log('开始渲染Mermaid图表...');
+    console.log('代码预览:', code.substring(0, 100) + (code.length > 100 ? '...' : ''));
+
+    safeSetState(setIsRendering, true);
+    safeSetState(setError, null);
+    safeSetState(setHasRendered, false);
+
+    // 设置超时
+    const timeoutId = setTimeout(() => {
+      console.error('渲染超时，强制停止');
+      safeSetState(setIsRendering, false);
+      safeSetState(setError, '渲染超时，请重试');
+    }, 15000); // 15秒超时
+
+    try {
+      // 初始化Mermaid配置（只初始化一次）
+      if (!mermaidInitialized) {
+        console.log('初始化Mermaid配置...');
+        mermaid.initialize({ 
+          startOnLoad: false,
+          theme: 'default',
+          securityLevel: 'loose',
+          fontFamily: '"Segoe UI", Tahoma, Geneva, Verdana, sans-serif',
+          logLevel: 'error',
+          flowchart: {
+            useMaxWidth: false,
+            htmlLabels: true,
+            curve: 'basis'
+          },
+          mindmap: {
+            useMaxWidth: false,
+            padding: 20
           }
         });
+        setMermaidInitialized(true);
+        console.log('Mermaid初始化完成');
+      }
 
-        // 再次检查组件是否仍然挂载
-        if (!isMountedRef.current) return;
+      // 清空容器
+      if (containerRef.current) {
+        containerRef.current.innerHTML = '';
+        console.log('容器已清空');
+      }
 
-        // 检查代码是否为mindmap类型
-        const isMindmap = code.trim().startsWith('mindmap');
-        console.log('是否为mindmap类型:', isMindmap);
+      // 检查语法（可选，如果失败就跳过）
+      try {
+        console.log('检查语法...');
+        await mermaid.parse(code);
+        console.log('语法检查通过');
+      } catch (parseError) {
+        console.warn('语法检查失败，尝试直接渲染:', parseError.message);
+      }
 
-        // 验证语法（可选）
-        try {
-          const isValid = await mermaid.parse(code);
-          console.log('语法验证结果:', isValid);
-        } catch (parseError) {
-          console.warn('语法验证失败，尝试直接渲染:', parseError);
-        }
+      // 渲染图表
+      console.log('开始渲染图表...');
+      const renderResult = await mermaid.render(diagramId, code);
+      console.log('渲染完成，结果:', renderResult ? '有数据' : '无数据');
+      
+      // 检查组件是否仍然存在（不使用isMountedRef）
+      if (!containerRef.current) {
+        console.log('容器不存在，停止渲染');
+        return;
+      }
 
-        // 再次检查组件是否仍然挂载
-        if (!isMountedRef.current) return;
-
-        // 渲染图表
-        console.log('开始渲染，diagramId:', diagramId);
+      if (renderResult && renderResult.svg) {
+        console.log('处理SVG结果...');
+        // 直接插入SVG，避免复杂的DOM操作
+        containerRef.current.innerHTML = renderResult.svg;
         
-        try {
-          const result = await mermaid.render(diagramId, code);
-          console.log('渲染结果:', result);
+        const svgElement = containerRef.current.querySelector('svg');
+        if (svgElement) {
+          console.log('SVG元素找到，设置样式...');
+          // 设置SVG样式
+          svgElement.style.maxWidth = 'none';
+          svgElement.style.height = 'auto';
+          svgElement.style.userSelect = 'none';
+          svgElement.style.cursor = isDragging ? 'grabbing' : 'grab';
+          svgElement.style.display = 'block';
           
-          // 检查组件是否仍然挂载并且结果有效
-          if (isMountedRef.current && containerRef.current && result && result.svg) {
-            safeDOMOperation(() => {
-              // 创建临时容器来安全地插入SVG
-              const tempDiv = document.createElement('div');
-              tempDiv.innerHTML = result.svg;
-              const svgElement = tempDiv.querySelector('svg');
-              
-              if (svgElement && containerRef.current) {
-                // 应用样式
-                svgElement.style.width = '100%';
-                svgElement.style.height = 'auto';
-                svgElement.style.maxWidth = '100%';
-                svgElement.style.display = 'block';
-                svgElement.style.margin = '0 auto';
-                
-                // 安全地插入SVG
-                containerRef.current.appendChild(svgElement);
-                console.log('SVG元素已安全插入');
-              }
-            });
-            
-            console.log('图表渲染成功');
-          } else if (!isMountedRef.current) {
-            console.log('组件已卸载，跳过DOM操作');
-            return;
-          } else {
-            throw new Error('渲染结果为空或无效');
-          }
-        } catch (renderError) {
-          console.error('标准渲染方法失败，尝试fallback方法:', renderError);
-          
-          // 检查组件是否仍然挂载
-          if (!isMountedRef.current) return;
-          
-          // Fallback: 尝试使用mermaid.mermaidAPI.render
-          try {
-            const fallbackResult = await new Promise((resolve, reject) => {
-              // 添加超时机制
-              const timeoutId = setTimeout(() => {
-                reject(new Error('渲染超时'));
-              }, 10000);
-              
-              mermaid.mermaidAPI.render(diagramId, code, (svg, bindFunctions) => {
-                clearTimeout(timeoutId);
-                resolve({ svg, bindFunctions });
-              }, containerRef.current);
-            });
-            
-            // 检查组件是否仍然挂载
-            if (isMountedRef.current && containerRef.current && fallbackResult && fallbackResult.svg) {
-              safeDOMOperation(() => {
-                const tempDiv = document.createElement('div');
-                tempDiv.innerHTML = fallbackResult.svg;
-                const svgElement = tempDiv.querySelector('svg');
-                
-                if (svgElement && containerRef.current) {
-                  containerRef.current.appendChild(svgElement);
-                }
-              });
-              console.log('Fallback渲染成功');
-            } else if (!isMountedRef.current) {
-              console.log('组件已卸载，跳过fallback DOM操作');
-              return;
-            } else {
-              throw new Error('Fallback渲染也失败了');
-            }
-          } catch (fallbackError) {
-            console.error('Fallback渲染失败:', fallbackError);
-            throw renderError;
-          }
+          console.log('SVG已插入DOM');
+          safeSetState(setHasRendered, true);
+        } else {
+          console.log('SVG元素未找到');
+          throw new Error('SVG元素未找到');
         }
-      } catch (err) {
-        console.error('Mermaid rendering error:', err);
-        console.error('错误详情:', err.message, err.stack);
-        safeSetState(setError, err.message || '图表渲染失败');
-      } finally {
-        safeSetState(setIsRendering, false);
-        safeSetState(setHasRendered, true);
+      } else {
+        throw new Error('渲染结果为空');
       }
-    };
 
-    // 添加延迟以确保DOM准备就绪
-    const timeoutId = setTimeout(() => {
-      if (isMountedRef.current) {
-        renderDiagram();
-      }
-    }, 100);
-    
-    return () => {
-      clearTimeout(timeoutId);
-    };
-  }, [code, diagramId, safeSetState, safeDOMOperation]);
-
-  // 组件卸载时的清理
-  useEffect(() => {
-    return () => {
-      isMountedRef.current = false;
-      // 安全地清理DOM
+    } catch (error) {
+      console.error('主渲染方法失败:', error);
+      
+      // 如果标准方法失败，尝试fallback方法
       if (containerRef.current) {
         try {
-          while (containerRef.current.firstChild) {
-            containerRef.current.removeChild(containerRef.current.firstChild);
-          }
-        } catch (error) {
-          console.warn('清理DOM时发生错误:', error);
+          console.log('尝试fallback渲染方法...');
+          
+          // 使用回调方式渲染
+          const fallbackPromise = new Promise((resolve, reject) => {
+            const fallbackTimeout = setTimeout(() => {
+              reject(new Error('Fallback渲染超时'));
+            }, 10000);
+
+            mermaid.mermaidAPI.render(
+              diagramId + '_fallback',
+              code,
+              (svg) => {
+                clearTimeout(fallbackTimeout);
+                if (containerRef.current && svg) {
+                  console.log('Fallback渲染成功');
+                  containerRef.current.innerHTML = svg;
+                  
+                  const svgElement = containerRef.current.querySelector('svg');
+                  if (svgElement) {
+                    svgElement.style.maxWidth = 'none';
+                    svgElement.style.height = 'auto';
+                    svgElement.style.userSelect = 'none';
+                    svgElement.style.cursor = isDragging ? 'grabbing' : 'grab';
+                  }
+                  
+                  safeSetState(setHasRendered, true);
+                  resolve(svg);
+                } else {
+                  reject(new Error('Fallback结果为空'));
+                }
+              },
+              containerRef.current
+            );
+          });
+
+          await fallbackPromise;
+        } catch (fallbackError) {
+          console.error('Fallback渲染也失败:', fallbackError);
+          safeSetState(setError, fallbackError.message || error.message || '图表渲染失败');
         }
       }
-    };
-  }, []);
+    } finally {
+      clearTimeout(timeoutId);
+      console.log('渲染流程结束');
+      safeSetState(setIsRendering, false);
+    }
+  }, [code, isRendering, diagramId, safeSetState, isDragging, mermaidInitialized]);
 
-  const handleCopyCode = async () => {
+  // 监听代码变化重新渲染
+  useEffect(() => {
+    if (code && !isRendering) {
+      // 延迟执行，确保DOM已准备好
+      const timeoutId = setTimeout(() => {
+        renderDiagram();
+      }, 100);
+      
+      return () => clearTimeout(timeoutId);
+    }
+  }, [code]); // 只依赖code变化
+
+  // 复制代码功能
+  const handleCopyCode = useCallback(async () => {
     try {
       await navigator.clipboard.writeText(code);
       safeSetState(setCopied, true);
       toast.success('Mermaid代码已复制到剪贴板');
-      
-      // 2秒后重置复制状态
-      setTimeout(() => {
-        safeSetState(setCopied, false);
-      }, 2000);
-    } catch (err) {
-      console.error('Failed to copy code:', err);
-      toast.error('复制失败，请手动选择代码');
+      setTimeout(() => safeSetState(setCopied, false), 2000);
+    } catch (error) {
+      console.error('Failed to copy:', error);
+      toast.error('复制失败，请手动复制');
     }
-  };
-
-  if (error) {
-    return (
-      <div className="h-full flex items-center justify-center p-6">
-        <div className="text-center max-w-sm">
-          <AlertCircle className="w-12 h-12 text-red-500 mx-auto mb-4" />
-          <h3 className="text-lg font-medium text-gray-900 mb-2">图表渲染失败</h3>
-          <p className="text-sm text-gray-600 mb-4">{error}</p>
-          <details className="text-left">
-            <summary className="cursor-pointer text-sm text-blue-600 hover:text-blue-800">
-              查看原始代码
-            </summary>
-            <pre className="mt-2 p-3 bg-gray-100 rounded text-xs overflow-auto max-h-32">
-              {code}
-            </pre>
-          </details>
-        </div>
-      </div>
-    );
-  }
+  }, [code, safeSetState]);
 
   if (!code) {
     return (
-      <div className="h-full flex items-center justify-center p-6">
-        <div className="text-center">
-          <div className="w-12 h-12 bg-gray-200 rounded-full mx-auto mb-4 flex items-center justify-center">
-            <svg className="w-6 h-6 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
-            </svg>
-          </div>
-          <p className="text-sm text-gray-500">暂无思维导图数据</p>
+      <div className="flex items-center justify-center h-full bg-gray-50">
+        <div className="text-center text-gray-500">
+          <AlertCircle className="h-8 w-8 mx-auto mb-2" />
+          <p>暂无思维导图数据</p>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="h-full flex flex-col">
-      {/* 工具栏 */}
-      <div className="flex-shrink-0 px-4 py-2 border-b bg-gray-50 flex items-center justify-between">
-        <div className="text-xs text-gray-500">
-          Mermaid 图表
-        </div>
+    <div className="relative h-full bg-gray-50 overflow-hidden">
+      {/* 控制工具栏 */}
+      <div className="absolute top-2 right-2 z-10 flex space-x-1 bg-white rounded-lg shadow-sm border p-1">
+        <button
+          onClick={handleZoomIn}
+          className="p-1 hover:bg-gray-100 rounded transition-colors"
+          title="放大"
+        >
+          <ZoomIn className="w-4 h-4 text-gray-600" />
+        </button>
+        <button
+          onClick={handleZoomOut}
+          className="p-1 hover:bg-gray-100 rounded transition-colors"
+          title="缩小"
+        >
+          <ZoomOut className="w-4 h-4 text-gray-600" />
+        </button>
+        <button
+          onClick={handleReset}
+          className="p-1 hover:bg-gray-100 rounded transition-colors"
+          title="重置视图"
+        >
+          <RotateCcw className="w-4 h-4 text-gray-600" />
+        </button>
+        <div className="w-px bg-gray-300 mx-1"></div>
         <button
           onClick={handleCopyCode}
-          className="inline-flex items-center px-2 py-1 text-xs bg-gray-100 hover:bg-gray-200 text-gray-700 rounded transition-colors"
-          title="复制Mermaid代码"
+          className="p-1 hover:bg-gray-100 rounded transition-colors"
+          title="复制代码"
         >
           {copied ? (
-            <>
-              <Check className="w-3 h-3 mr-1" />
-              已复制
-            </>
+            <Check className="w-4 h-4 text-green-600" />
           ) : (
-            <>
-              <Copy className="w-3 h-3 mr-1" />
-              复制代码
-            </>
+            <Copy className="w-4 h-4 text-gray-600" />
           )}
         </button>
       </div>
 
-      {/* 图表容器 */}
-      <div className="flex-1 overflow-auto p-4">
-        <div 
-          ref={containerRef}
-          className="w-full h-full flex items-center justify-center"
-          style={{ minHeight: '200px' }}
-        >
-          {/* 加载中的占位符 */}
-          {isRendering && !hasRendered && (
-            <div className="text-center">
-              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto mb-2"></div>
-              <p className="text-sm text-gray-500">正在渲染图表...</p>
-            </div>
-          )}
-        </div>
+      {/* 缩放比例显示 */}
+      <div className="absolute bottom-2 right-2 z-10 bg-white rounded px-2 py-1 shadow-sm border text-xs text-gray-600">
+        {Math.round(scale * 100)}%
       </div>
 
-      {/* 代码预览区域 */}
-      <div className="flex-shrink-0 border-t bg-gray-50">
-        <details className="group">
-          <summary className="px-4 py-2 cursor-pointer text-xs text-gray-600 hover:text-gray-900 flex items-center justify-between">
-            <span>查看原始代码</span>
-            <svg className="w-4 h-4 transition-transform group-open:rotate-180" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-            </svg>
-          </summary>
-          <div className="px-4 pb-4">
-            <pre className="text-xs bg-white p-3 rounded border overflow-auto max-h-32 text-gray-800">
-              {code}
-            </pre>
+      {/* 拖拽提示 */}
+      {!isDragging && hasRendered && (
+        <div className="absolute bottom-2 left-2 z-10 bg-white rounded px-2 py-1 shadow-sm border text-xs text-gray-500 flex items-center">
+          <Move className="w-3 h-3 mr-1" />
+          拖拽移动 | 滚轮缩放
+        </div>
+      )}
+
+      {/* 图表容器 */}
+      <div 
+        className="w-full h-full flex items-center justify-center overflow-hidden"
+        onWheel={handleWheel}
+      >
+        {isRendering && (
+          <div className="absolute inset-0 flex items-center justify-center bg-gray-50 bg-opacity-75 z-20">
+            <div className="text-center">
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto mb-2"></div>
+              <p className="text-sm text-gray-600">正在渲染图表...</p>
+            </div>
           </div>
-        </details>
+        )}
+
+        {error ? (
+          <div className="text-center text-red-600 p-4">
+            <AlertCircle className="h-8 w-8 mx-auto mb-2" />
+            <p className="font-medium mb-1">渲染失败</p>
+            <p className="text-sm">{error}</p>
+            <button
+              onClick={renderDiagram}
+              className="mt-2 px-3 py-1 bg-red-100 text-red-700 rounded text-sm hover:bg-red-200 transition-colors"
+            >
+              重试
+            </button>
+          </div>
+        ) : (
+          <div
+            ref={containerRef}
+            className="transform-gpu transition-transform duration-200 ease-out"
+            style={{
+              transform: `translate(${position.x}px, ${position.y}px) scale(${scale})`,
+              cursor: isDragging ? 'grabbing' : 'grab'
+            }}
+            onMouseDown={handleMouseDown}
+          />
+        )}
       </div>
     </div>
   );
