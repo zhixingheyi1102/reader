@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
 import mermaid from 'mermaid';
 import { AlertCircle, Copy, Check } from 'lucide-react';
 import toast from 'react-hot-toast';
@@ -7,16 +7,44 @@ const MermaidDiagram = ({ code }) => {
   const [diagramId] = useState(() => `mermaid-${Math.random().toString(36).substr(2, 9)}`);
   const [error, setError] = useState(null);
   const [copied, setCopied] = useState(false);
+  const [isRendering, setIsRendering] = useState(false);
+  const [hasRendered, setHasRendered] = useState(false);
   const containerRef = useRef(null);
+  const isMountedRef = useRef(true); // 添加挂载状态追踪
+
+  // 安全的状态更新函数
+  const safeSetState = useCallback((setter, value) => {
+    if (isMountedRef.current) {
+      setter(value);
+    }
+  }, []);
+
+  // 安全的DOM操作函数
+  const safeDOMOperation = useCallback((operation) => {
+    if (isMountedRef.current && containerRef.current) {
+      try {
+        return operation();
+      } catch (error) {
+        console.warn('DOM operation failed:', error);
+        return false;
+      }
+    }
+    return false;
+  }, []);
 
   useEffect(() => {
+    // 组件挂载时设置为true
+    isMountedRef.current = true;
+    
     // 初始化Mermaid配置
+    console.log('初始化Mermaid配置...');
     mermaid.initialize({
-      startOnLoad: true,
+      startOnLoad: false,
       theme: 'default',
       securityLevel: 'loose',
       fontFamily: 'trebuchet ms, verdana, arial, sans-serif',
       fontSize: 14,
+      logLevel: 'error', // 减少日志输出
       flowchart: {
         htmlLabels: true,
         curve: 'basis',
@@ -25,6 +53,8 @@ const MermaidDiagram = ({ code }) => {
       mindmap: {
         useMaxWidth: true,
         padding: 10,
+        maxNodeSizeX: 200,
+        maxNodeSizeY: 100,
       },
       themeVariables: {
         primaryColor: '#3b82f6',
@@ -41,59 +71,185 @@ const MermaidDiagram = ({ code }) => {
         tertiaryBkg: '#e5e7eb',
       },
     });
+    console.log('Mermaid配置完成');
+
+    // 清理函数
+    return () => {
+      isMountedRef.current = false;
+    };
   }, []);
 
   useEffect(() => {
-    if (!code || !containerRef.current) return;
+    if (!code || !isMountedRef.current) return;
 
     const renderDiagram = async () => {
+      // 检查组件是否仍然挂载
+      if (!isMountedRef.current) return;
+
       try {
-        setError(null);
+        safeSetState(setError, null);
+        safeSetState(setIsRendering, true);
+        safeSetState(setHasRendered, false);
         
-        // 清空容器
-        if (containerRef.current) {
-          containerRef.current.innerHTML = '';
+        console.log('开始渲染Mermaid图表...');
+        console.log('代码内容:', code);
+        
+        // 安全地清空容器
+        safeDOMOperation(() => {
+          if (containerRef.current) {
+            // 使用更安全的方式清空内容
+            while (containerRef.current.firstChild) {
+              containerRef.current.removeChild(containerRef.current.firstChild);
+            }
+          }
+        });
+
+        // 再次检查组件是否仍然挂载
+        if (!isMountedRef.current) return;
+
+        // 检查代码是否为mindmap类型
+        const isMindmap = code.trim().startsWith('mindmap');
+        console.log('是否为mindmap类型:', isMindmap);
+
+        // 验证语法（可选）
+        try {
+          const isValid = await mermaid.parse(code);
+          console.log('语法验证结果:', isValid);
+        } catch (parseError) {
+          console.warn('语法验证失败，尝试直接渲染:', parseError);
         }
 
-        // 验证Mermaid语法
-        const isValid = await mermaid.parse(code);
-        if (!isValid) {
-          throw new Error('Invalid Mermaid syntax');
-        }
+        // 再次检查组件是否仍然挂载
+        if (!isMountedRef.current) return;
 
         // 渲染图表
-        const { svg } = await mermaid.render(diagramId, code);
+        console.log('开始渲染，diagramId:', diagramId);
         
-        if (containerRef.current) {
-          containerRef.current.innerHTML = svg;
+        try {
+          const result = await mermaid.render(diagramId, code);
+          console.log('渲染结果:', result);
           
-          // 添加响应式样式
-          const svgElement = containerRef.current.querySelector('svg');
-          if (svgElement) {
-            svgElement.style.width = '100%';
-            svgElement.style.height = 'auto';
-            svgElement.style.maxWidth = '100%';
-            svgElement.style.display = 'block';
-            svgElement.style.margin = '0 auto';
+          // 检查组件是否仍然挂载并且结果有效
+          if (isMountedRef.current && containerRef.current && result && result.svg) {
+            safeDOMOperation(() => {
+              // 创建临时容器来安全地插入SVG
+              const tempDiv = document.createElement('div');
+              tempDiv.innerHTML = result.svg;
+              const svgElement = tempDiv.querySelector('svg');
+              
+              if (svgElement && containerRef.current) {
+                // 应用样式
+                svgElement.style.width = '100%';
+                svgElement.style.height = 'auto';
+                svgElement.style.maxWidth = '100%';
+                svgElement.style.display = 'block';
+                svgElement.style.margin = '0 auto';
+                
+                // 安全地插入SVG
+                containerRef.current.appendChild(svgElement);
+                console.log('SVG元素已安全插入');
+              }
+            });
+            
+            console.log('图表渲染成功');
+          } else if (!isMountedRef.current) {
+            console.log('组件已卸载，跳过DOM操作');
+            return;
+          } else {
+            throw new Error('渲染结果为空或无效');
+          }
+        } catch (renderError) {
+          console.error('标准渲染方法失败，尝试fallback方法:', renderError);
+          
+          // 检查组件是否仍然挂载
+          if (!isMountedRef.current) return;
+          
+          // Fallback: 尝试使用mermaid.mermaidAPI.render
+          try {
+            const fallbackResult = await new Promise((resolve, reject) => {
+              // 添加超时机制
+              const timeoutId = setTimeout(() => {
+                reject(new Error('渲染超时'));
+              }, 10000);
+              
+              mermaid.mermaidAPI.render(diagramId, code, (svg, bindFunctions) => {
+                clearTimeout(timeoutId);
+                resolve({ svg, bindFunctions });
+              }, containerRef.current);
+            });
+            
+            // 检查组件是否仍然挂载
+            if (isMountedRef.current && containerRef.current && fallbackResult && fallbackResult.svg) {
+              safeDOMOperation(() => {
+                const tempDiv = document.createElement('div');
+                tempDiv.innerHTML = fallbackResult.svg;
+                const svgElement = tempDiv.querySelector('svg');
+                
+                if (svgElement && containerRef.current) {
+                  containerRef.current.appendChild(svgElement);
+                }
+              });
+              console.log('Fallback渲染成功');
+            } else if (!isMountedRef.current) {
+              console.log('组件已卸载，跳过fallback DOM操作');
+              return;
+            } else {
+              throw new Error('Fallback渲染也失败了');
+            }
+          } catch (fallbackError) {
+            console.error('Fallback渲染失败:', fallbackError);
+            throw renderError;
           }
         }
       } catch (err) {
         console.error('Mermaid rendering error:', err);
-        setError(err.message || '图表渲染失败');
+        console.error('错误详情:', err.message, err.stack);
+        safeSetState(setError, err.message || '图表渲染失败');
+      } finally {
+        safeSetState(setIsRendering, false);
+        safeSetState(setHasRendered, true);
       }
     };
 
-    renderDiagram();
-  }, [code, diagramId]);
+    // 添加延迟以确保DOM准备就绪
+    const timeoutId = setTimeout(() => {
+      if (isMountedRef.current) {
+        renderDiagram();
+      }
+    }, 100);
+    
+    return () => {
+      clearTimeout(timeoutId);
+    };
+  }, [code, diagramId, safeSetState, safeDOMOperation]);
+
+  // 组件卸载时的清理
+  useEffect(() => {
+    return () => {
+      isMountedRef.current = false;
+      // 安全地清理DOM
+      if (containerRef.current) {
+        try {
+          while (containerRef.current.firstChild) {
+            containerRef.current.removeChild(containerRef.current.firstChild);
+          }
+        } catch (error) {
+          console.warn('清理DOM时发生错误:', error);
+        }
+      }
+    };
+  }, []);
 
   const handleCopyCode = async () => {
     try {
       await navigator.clipboard.writeText(code);
-      setCopied(true);
+      safeSetState(setCopied, true);
       toast.success('Mermaid代码已复制到剪贴板');
       
       // 2秒后重置复制状态
-      setTimeout(() => setCopied(false), 2000);
+      setTimeout(() => {
+        safeSetState(setCopied, false);
+      }, 2000);
     } catch (err) {
       console.error('Failed to copy code:', err);
       toast.error('复制失败，请手动选择代码');
@@ -169,10 +325,12 @@ const MermaidDiagram = ({ code }) => {
           style={{ minHeight: '200px' }}
         >
           {/* 加载中的占位符 */}
-          <div className="text-center">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto mb-2"></div>
-            <p className="text-sm text-gray-500">正在渲染图表...</p>
-          </div>
+          {isRendering && !hasRendered && (
+            <div className="text-center">
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto mb-2"></div>
+              <p className="text-sm text-gray-500">正在渲染图表...</p>
+            </div>
+          )}
         </div>
       </div>
 

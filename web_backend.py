@@ -97,82 +97,119 @@ async def upload_document(file: UploadFile = File(...)):
         raise HTTPException(status_code=500, detail=f"处理文件时出错: {str(e)}")
 
 @app.post("/api/generate-mindmap/{document_id}")
-async def generate_mindmap(document_id: str):
-    """为指定文档生成思维导图"""
+async def generate_mindmap(document_id: str, method: str = "standard"):
+    """为指定文档生成思维导图
+    
+    Args:
+        document_id: 文档ID
+        method: 生成方法，"standard"(标准详细模式) 或 "simple"(快速简化模式)
+    """
     
     if document_id not in document_status:
         raise HTTPException(status_code=404, detail="文档不存在")
     
     doc_info = document_status[document_id]
     
-    if doc_info["status"] == "generating":
-        print(f"⏳ [状态查询] 文档 {document_id} 思维导图正在生成中...")
+    # 根据方法类型检查状态
+    status_key = f"status_{method}" if method == "simple" else "status"
+    code_key = f"mermaid_code_{method}" if method == "simple" else "mermaid_code"
+    
+    if doc_info.get(status_key) == "generating":
+        print(f"⏳ [状态查询] 文档 {document_id} 思维导图正在生成中... (方法: {method})")
         return JSONResponse({
             "success": True,
             "status": "generating",
-            "message": "思维导图正在生成中..."
+            "method": method,
+            "message": f"思维导图正在生成中... ({method}模式)"
         })
     
-    if doc_info["status"] == "completed" and doc_info["mermaid_code"]:
-        print(f"✅ [状态查询] 文档 {document_id} 思维导图已生成完成")
+    if doc_info.get(status_key) == "completed" and doc_info.get(code_key):
+        print(f"✅ [状态查询] 文档 {document_id} 思维导图已生成完成 (方法: {method})")
         return JSONResponse({
             "success": True,
             "status": "completed",
-            "mermaid_code": doc_info["mermaid_code"],
-            "message": "思维导图已生成"
+            "method": method,
+            "mermaid_code": doc_info[code_key],
+            "message": f"思维导图已生成 ({method}模式)"
         })
     
     try:
-        print(f"🔄 [开始生成] 为文档 {document_id} 启动思维导图生成任务")
+        print(f"🔄 [开始生成] 为文档 {document_id} 启动思维导图生成任务 (方法: {method})")
         
         # 更新状态为生成中
-        document_status[document_id]["status"] = "generating"
+        doc_info[status_key] = "generating"
         
         # 异步生成思维导图
-        asyncio.create_task(generate_mindmap_async(document_id, doc_info["content"]))
+        asyncio.create_task(generate_mindmap_async(document_id, doc_info["content"], method))
         
         return JSONResponse({
             "success": True,
             "status": "generating",
-            "message": "开始生成思维导图..."
+            "method": method,
+            "message": f"开始生成思维导图... ({method}模式)"
         })
         
     except Exception as e:
-        print(f"❌ [启动失败] 文档 {document_id} 思维导图生成启动失败: {str(e)}")
+        print(f"❌ [启动失败] 文档 {document_id} 思维导图生成启动失败: {str(e)} (方法: {method})")
         logger.error(f"生成思维导图时出错: {str(e)}")
-        document_status[document_id]["status"] = "error"
-        document_status[document_id]["error"] = str(e)
+        doc_info[status_key] = "error"
+        doc_info[f"error_{method}"] = str(e)
         raise HTTPException(status_code=500, detail=f"生成思维导图时出错: {str(e)}")
 
-async def generate_mindmap_async(document_id: str, content: str):
-    """异步生成思维导图"""
+@app.post("/api/generate-mindmap-simple/{document_id}")
+async def generate_mindmap_simple(document_id: str):
+    """为指定文档快速生成思维导图（简化版本）"""
+    return await generate_mindmap(document_id, method="simple")
+
+async def generate_mindmap_async(document_id: str, content: str, method: str = "standard"):
+    """异步生成思维导图
+    
+    Args:
+        document_id: 文档ID
+        content: 文档内容
+        method: 生成方法，"standard" 或 "simple"
+    """
     try:
-        print(f"\n🚀 [开始生成] 文档ID: {document_id}")
+        method_name = "简化快速" if method == "simple" else "标准详细"
+        print(f"\n🚀 [开始生成] 文档ID: {document_id} (方法: {method_name})")
         print(f"📄 [文档内容] 长度: {len(content)} 字符")
         print("=" * 60)
         
-        logger.info(f"Starting mindmap generation for document: {document_id}")
+        logger.info(f"Starting {method} mindmap generation for document: {document_id}")
         generator = MindMapGenerator()
         
-        print("🤖 [AI处理] 正在调用思维导图生成器...")
-        mermaid_syntax = await generator.generate_mindmap(content, request_id=document_id)
+        print(f"🤖 [AI处理] 正在调用思维导图生成器... (方法: {method_name})")
+        
+        # 根据方法选择不同的生成函数
+        if method == "simple":
+            mermaid_syntax = await generator.generate_mindmap_simple(content, request_id=document_id)
+        else:
+            mermaid_syntax = await generator.generate_mindmap(content, request_id=document_id)
         
         # 更新文档状态
-        document_status[document_id]["status"] = "completed"
-        document_status[document_id]["mermaid_code"] = mermaid_syntax
+        status_key = f"status_{method}" if method == "simple" else "status"
+        code_key = f"mermaid_code_{method}" if method == "simple" else "mermaid_code"
         
-        print(f"✅ [生成完成] 文档ID: {document_id}")
+        document_status[document_id][status_key] = "completed"
+        document_status[document_id][code_key] = mermaid_syntax
+        
+        print(f"✅ [生成完成] 文档ID: {document_id} (方法: {method_name})")
         print(f"🎯 [思维导图] 代码长度: {len(mermaid_syntax)} 字符")
         print("=" * 60)
         
-        logger.info(f"Mindmap generation completed for document: {document_id}")
+        logger.info(f"{method.capitalize()} mindmap generation completed for document: {document_id}")
         
     except Exception as e:
-        print(f"❌ [生成失败] 文档ID: {document_id}, 错误: {str(e)}")
+        method_name = "简化快速" if method == "simple" else "标准详细"
+        print(f"❌ [生成失败] 文档ID: {document_id}, 错误: {str(e)} (方法: {method_name})")
         print("=" * 60)
         logger.error(f"异步生成思维导图失败: {str(e)}")
-        document_status[document_id]["status"] = "error"
-        document_status[document_id]["error"] = str(e)
+        
+        status_key = f"status_{method}" if method == "simple" else "status"
+        error_key = f"error_{method}" if method == "simple" else "error"
+        
+        document_status[document_id][status_key] = "error"
+        document_status[document_id][error_key] = str(e)
 
 @app.get("/api/document-status/{document_id}")
 async def get_document_status(document_id: str):
@@ -186,11 +223,14 @@ async def get_document_status(document_id: str):
     return JSONResponse({
         "success": True,
         "document_id": document_id,
-        "status": doc_info["status"],
-        "filename": doc_info["filename"],
-        "content": doc_info["content"],
-        "mermaid_code": doc_info.get("mermaid_code"),
-        "error": doc_info.get("error")
+        "status": doc_info.get("status", "not_started"),  # 标准模式状态
+        "status_simple": doc_info.get("status_simple", "not_started"),  # 简化模式状态
+        "filename": doc_info.get("filename"),
+        "content": doc_info.get("content"),
+        "mermaid_code": doc_info.get("mermaid_code"),  # 标准模式代码
+        "mermaid_code_simple": doc_info.get("mermaid_code_simple"),  # 简化模式代码
+        "error": doc_info.get("error"),  # 标准模式错误
+        "error_simple": doc_info.get("error_simple")  # 简化模式错误
     })
 
 @app.get("/api/document/{document_id}")
@@ -267,6 +307,11 @@ if __name__ == "__main__":
     print("   ✅ [生成完成] - 思维导图生成成功")
     print("   ❌ [生成失败] - 生成过程出现错误")
     print("   ⏳ [状态查询] - 客户端查询生成状态")
+    print("=" * 80)
+    print("🎯 新功能: 支持两种生成模式")
+    print("   📊 标准详细模式: 3-5分钟，详细分析，高质量结果")
+    print("   ⚡ 快速简化模式: 1-2分钟，基础结构，快速预览")
+    print("   📋 API端点: /api/generate-mindmap/{id} 和 /api/generate-mindmap-simple/{id}")
     print("=" * 80)
     print("🚀 启动服务中...")
     print("")

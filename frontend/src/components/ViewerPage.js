@@ -1,66 +1,99 @@
 import React, { useState, useEffect } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import ReactMarkdown from 'react-markdown';
 import toast from 'react-hot-toast';
-import { ArrowLeft, Download, ExternalLink, RefreshCw, Play, Clock, CheckCircle, XCircle } from 'lucide-react';
+import { ArrowLeft, Download, ExternalLink, RefreshCw, Play, Clock, CheckCircle, XCircle, Zap, BarChart3 } from 'lucide-react';
 import axios from 'axios';
 import MermaidDiagram from './MermaidDiagram';
 
 const ViewerPage = () => {
   const { documentId } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
+  
   const [document, setDocument] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [mindmapStatus, setMindmapStatus] = useState('not_started'); // not_started, generating, completed, error
+  const [mindmapStatus, setMindmapStatus] = useState('not_started');
   const [mindmapError, setMindmapError] = useState(null);
+  const [simpleMindmapStatus, setSimpleMindmapStatus] = useState('not_started');
+  const [simpleMindmapError, setSimpleMindmapError] = useState(null);
+  
+  // 从上传页面传递的模式选择
+  const selectedMode = location.state?.selectedMode || 'simple';
+  const [currentMindmapMode, setCurrentMindmapMode] = useState(selectedMode);
+  const [autoStarted, setAutoStarted] = useState(false);
 
   useEffect(() => {
     loadDocument();
   }, [documentId]);
 
+  // 文档加载完成后自动开始生成思维导图（只运行一次）
+  useEffect(() => {
+    if (document && !autoStarted) {
+      setAutoStarted(true);
+      setTimeout(() => {
+        startMindmapGeneration(selectedMode);
+      }, 1000);
+    }
+  }, [document, autoStarted, selectedMode]);
+
   // 轮询检查思维导图生成状态
   useEffect(() => {
-    let pollInterval;
-    
-    if (mindmapStatus === 'generating') {
-      pollInterval = setInterval(async () => {
+    let interval;
+    if (mindmapStatus === 'generating' || simpleMindmapStatus === 'generating') {
+      interval = setInterval(async () => {
         try {
           const response = await axios.get(`http://localhost:8000/api/document-status/${documentId}`);
           if (response.data.success) {
-            const status = response.data.status;
-            setMindmapStatus(status);
+            // 检查标准模式
+            if (mindmapStatus === 'generating') {
+              if (response.data.status === 'completed' && response.data.mermaid_code) {
+                setMindmapStatus('completed');
+                setDocument(prev => ({
+                  ...prev,
+                  mermaid_code: response.data.mermaid_code
+                }));
+                toast.success('详细思维导图生成完成！');
+              } else if (response.data.status === 'error') {
+                setMindmapStatus('error');
+                setMindmapError(response.data.error || '生成失败');
+                toast.error('详细思维导图生成失败');
+              }
+            }
             
-            if (status === 'completed' && response.data.mermaid_code) {
-              setDocument(prev => ({
-                ...prev,
-                mermaid_code: response.data.mermaid_code
-              }));
-              toast.success('思维导图生成完成！');
-            } else if (status === 'error') {
-              setMindmapError(response.data.error || '生成思维导图时出错');
-              toast.error('思维导图生成失败');
+            // 检查简化模式
+            if (simpleMindmapStatus === 'generating') {
+              if (response.data.status_simple === 'completed' && response.data.mermaid_code_simple) {
+                setSimpleMindmapStatus('completed');
+                setDocument(prev => ({
+                  ...prev,
+                  mermaid_code_simple: response.data.mermaid_code_simple
+                }));
+                toast.success('快速思维导图生成完成！');
+              } else if (response.data.status_simple === 'error') {
+                setSimpleMindmapStatus('error');
+                setSimpleMindmapError(response.data.error_simple || '生成失败');
+                toast.error('快速思维导图生成失败');
+              }
             }
           }
         } catch (error) {
-          console.error('Poll status error:', error);
+          console.error('Status polling error:', error);
         }
-      }, 2000); // 每2秒检查一次
+      }, 2000);
     }
-    
+
     return () => {
-      if (pollInterval) {
-        clearInterval(pollInterval);
-      }
+      if (interval) clearInterval(interval);
     };
-  }, [mindmapStatus, documentId]);
+  }, [mindmapStatus, simpleMindmapStatus, documentId]);
 
   const loadDocument = async () => {
     try {
       setLoading(true);
       setError(null);
       
-      // 首先尝试获取文档状态
       const statusResponse = await axios.get(`http://localhost:8000/api/document-status/${documentId}`);
       
       if (statusResponse.data.success) {
@@ -69,18 +102,16 @@ const ViewerPage = () => {
           document_id: docData.document_id,
           content: docData.content,
           mermaid_code: docData.mermaid_code,
+          mermaid_code_simple: docData.mermaid_code_simple,
           filename: docData.filename
         });
         
         // 设置思维导图状态
         setMindmapStatus(docData.status);
+        setSimpleMindmapStatus(docData.status_simple || 'not_started');
         
-        // 如果还没有开始生成思维导图，自动开始生成
-        if (docData.status === 'uploaded') {
-          await startMindmapGeneration();
-        }
+        // 不在这里自动开始生成，避免双重触发
       } else {
-        // 如果新API不可用，回退到旧API
         const response = await axios.get(`http://localhost:8000/api/document/${documentId}`);
         
         if (response.data.success) {
@@ -100,32 +131,44 @@ const ViewerPage = () => {
     }
   };
 
-  const startMindmapGeneration = async () => {
+  const startMindmapGeneration = async (method = 'standard') => {
     try {
-      setMindmapStatus('generating');
-      setMindmapError(null);
+      const setStatus = method === 'simple' ? setSimpleMindmapStatus : setMindmapStatus;
+      const setError = method === 'simple' ? setSimpleMindmapError : setMindmapError;
       
-      const response = await axios.post(`http://localhost:8000/api/generate-mindmap/${documentId}`);
+      setStatus('generating');
+      setError(null);
+      setCurrentMindmapMode(method);
+      
+      const url = method === 'simple' 
+        ? `http://localhost:8000/api/generate-mindmap-simple/${documentId}`
+        : `http://localhost:8000/api/generate-mindmap/${documentId}`;
+      
+      const response = await axios.post(url);
       
       if (response.data.success) {
-        toast.success('开始生成思维导图...');
+        const modeText = method === 'simple' ? '快速' : '详细';
+        toast.success(`开始生成${modeText}思维导图...`);
         
-        // 如果立即完成，更新状态
         if (response.data.status === 'completed' && response.data.mermaid_code) {
-          setMindmapStatus('completed');
+          setStatus('completed');
+          const codeKey = method === 'simple' ? 'mermaid_code_simple' : 'mermaid_code';
           setDocument(prev => ({
             ...prev,
-            mermaid_code: response.data.mermaid_code
+            [codeKey]: response.data.mermaid_code
           }));
-          toast.success('思维导图生成完成！');
+          toast.success(`${modeText}思维导图生成完成！`);
         }
       } else {
         throw new Error(response.data.message || '开始生成失败');
       }
     } catch (error) {
-      console.error('Start mindmap generation error:', error);
-      setMindmapStatus('error');
-      setMindmapError(error.response?.data?.detail || error.message || '生成思维导图失败');
+      console.error(`Start ${method} mindmap generation error:`, error);
+      const setStatus = method === 'simple' ? setSimpleMindmapStatus : setMindmapStatus;
+      const setError = method === 'simple' ? setSimpleMindmapError : setMindmapError;
+      
+      setStatus('error');
+      setError(error.response?.data?.detail || error.message || '生成思维导图失败');
       toast.error('生成思维导图失败');
     }
   };
@@ -133,10 +176,10 @@ const ViewerPage = () => {
   const handleDebugMindmap = () => {
     console.log('=== 思维导图调试信息 ===');
     console.log('文档状态:', document);
-    console.log('思维导图状态:', mindmapStatus);
-    console.log('思维导图代码存在:', !!document?.mermaid_code);
-    console.log('思维导图代码长度:', document?.mermaid_code?.length || 0);
-    console.log('思维导图代码预览:', document?.mermaid_code?.substring(0, 200) + '...');
+    console.log('标准模式状态:', mindmapStatus);
+    console.log('简化模式状态:', simpleMindmapStatus);
+    console.log('当前模式:', currentMindmapMode);
+    console.log('选择的模式:', selectedMode);
     console.log('========================');
     
     toast.success('调试信息已输出到控制台');
@@ -158,34 +201,40 @@ const ViewerPage = () => {
     toast.success('Markdown文件下载成功');
   };
 
-  const handleDownloadMermaid = () => {
-    if (!document || !document.mermaid_code) return;
+  const handleDownloadMermaid = (mode = 'standard') => {
+    if (!document) return;
     
-    const blob = new Blob([document.mermaid_code], { type: 'text/plain' });
+    const mermaidCode = mode === 'simple' ? document.mermaid_code_simple : document.mermaid_code;
+    if (!mermaidCode) return;
+    
+    const modeText = mode === 'simple' ? '_simple' : '';
+    const blob = new Blob([mermaidCode], { type: 'text/plain' });
     const url = URL.createObjectURL(blob);
     const a = window.document.createElement('a');
     a.href = url;
-    a.download = `${documentId}_mindmap.mmd`;
+    a.download = `${documentId}_mindmap${modeText}.mmd`;
     window.document.body.appendChild(a);
     a.click();
     window.document.body.removeChild(a);
     URL.revokeObjectURL(url);
     
-    toast.success('Mermaid代码下载成功');
+    const downloadText = mode === 'simple' ? '快速Mermaid代码' : '详细Mermaid代码';
+    toast.success(`${downloadText}下载成功`);
   };
 
-  const handleOpenMermaidEditor = () => {
-    if (!document || !document.mermaid_code) return;
+  const handleOpenMermaidEditor = (mode = 'standard') => {
+    if (!document) return;
+    
+    const mermaidCode = mode === 'simple' ? document.mermaid_code_simple : document.mermaid_code;
+    if (!mermaidCode) return;
     
     try {
-      // 使用安全的方式处理包含中文的字符串
       const safeBtoa = (str) => {
         return btoa(unescape(encodeURIComponent(str)));
       };
       
-      // 创建Mermaid Live Editor的链接
       const mermaidConfig = {
-        code: document.mermaid_code,
+        code: mermaidCode,
         mermaid: { theme: 'default' }
       };
       
@@ -197,13 +246,11 @@ const ViewerPage = () => {
     } catch (error) {
       console.error('Error opening Mermaid editor:', error);
       
-      // 如果编码失败，使用简单的URL参数方式
-      const simpleUrl = `https://mermaid.live/edit#base64:${encodeURIComponent(document.mermaid_code)}`;
+      const simpleUrl = `https://mermaid.live/edit#base64:${encodeURIComponent(mermaidCode)}`;
       window.open(simpleUrl, '_blank');
       
-      // 也可以复制代码到剪贴板作为备选方案
       if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(document.mermaid_code).then(() => {
+        navigator.clipboard.writeText(mermaidCode).then(() => {
           toast.success('Mermaid代码已复制到剪贴板，可手动粘贴到编辑器中');
         }).catch(() => {
           toast.error('无法打开在线编辑器，请手动复制代码');
@@ -215,8 +262,11 @@ const ViewerPage = () => {
   };
 
   const MindmapStatusDisplay = () => {
+    const currentStatus = currentMindmapMode === 'simple' ? simpleMindmapStatus : mindmapStatus;
+    const currentError = currentMindmapMode === 'simple' ? simpleMindmapError : mindmapError;
+    
     const getStatusIcon = () => {
-      switch (mindmapStatus) {
+      switch (currentStatus) {
         case 'not_started':
           return <Play className="w-5 h-5 text-gray-400" />;
         case 'generating':
@@ -231,22 +281,23 @@ const ViewerPage = () => {
     };
 
     const getStatusText = () => {
-      switch (mindmapStatus) {
+      const modeText = currentMindmapMode === 'simple' ? '快速' : '详细';
+      switch (currentStatus) {
         case 'not_started':
-          return '准备生成思维导图';
+          return `准备生成${modeText}思维导图`;
         case 'generating':
-          return '正在生成思维导图...';
+          return `正在生成${modeText}思维导图...`;
         case 'completed':
-          return '思维导图已生成';
+          return `${modeText}思维导图已生成`;
         case 'error':
-          return mindmapError || '生成失败';
+          return currentError || '生成失败';
         default:
           return '未知状态';
       }
     };
 
     const getStatusColor = () => {
-      switch (mindmapStatus) {
+      switch (currentStatus) {
         case 'generating':
           return 'text-blue-600';
         case 'completed':
@@ -262,9 +313,9 @@ const ViewerPage = () => {
       <div className={`flex items-center space-x-2 ${getStatusColor()}`}>
         {getStatusIcon()}
         <span className="text-sm font-medium">{getStatusText()}</span>
-        {mindmapStatus === 'error' && (
+        {currentStatus === 'error' && (
           <button
-            onClick={startMindmapGeneration}
+            onClick={() => startMindmapGeneration(currentMindmapMode)}
             className="ml-2 text-xs bg-red-100 text-red-700 px-2 py-1 rounded hover:bg-red-200 transition-colors"
           >
             重试
@@ -359,30 +410,43 @@ const ViewerPage = () => {
                 <Download className="w-4 h-4 mr-1" />
                 下载MD
               </button>
-              <button
-                onClick={handleDownloadMermaid}
-                disabled={!document.mermaid_code}
-                className={`inline-flex items-center px-3 py-1.5 text-sm rounded-md transition-colors ${
-                  document.mermaid_code
-                    ? 'bg-blue-600 text-white hover:bg-blue-700'
-                    : 'bg-gray-300 text-gray-500 cursor-not-allowed'
-                }`}
-              >
-                <Download className="w-4 h-4 mr-1" />
-                下载图表
-              </button>
-              <button
-                onClick={handleOpenMermaidEditor}
-                disabled={!document.mermaid_code}
-                className={`inline-flex items-center px-3 py-1.5 text-sm rounded-md transition-colors ${
-                  document.mermaid_code
-                    ? 'bg-purple-600 text-white hover:bg-purple-700'
-                    : 'bg-gray-300 text-gray-500 cursor-not-allowed'
-                }`}
-              >
-                <ExternalLink className="w-4 h-4 mr-1" />
-                编辑图表
-              </button>
+              
+              {document.mermaid_code && (
+                <button
+                  onClick={() => handleDownloadMermaid('standard')}
+                  className="inline-flex items-center px-3 py-1.5 text-sm bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors"
+                >
+                  <Download className="w-4 h-4 mr-1" />
+                  下载详细图表
+                </button>
+              )}
+              
+              {document.mermaid_code_simple && (
+                <button
+                  onClick={() => handleDownloadMermaid('simple')}
+                  className="inline-flex items-center px-3 py-1.5 text-sm bg-purple-600 text-white rounded-md hover:bg-purple-700 transition-colors"
+                >
+                  <Download className="w-4 h-4 mr-1" />
+                  下载快速图表
+                </button>
+              )}
+              
+              {(document.mermaid_code || document.mermaid_code_simple) && (
+                <button
+                  onClick={() => {
+                    const mode = currentMindmapMode;
+                    const hasCode = mode === 'simple' ? document.mermaid_code_simple : document.mermaid_code;
+                    if (hasCode) {
+                      handleOpenMermaidEditor(mode);
+                    }
+                  }}
+                  className="inline-flex items-center px-3 py-1.5 text-sm bg-orange-600 text-white rounded-md hover:bg-orange-700 transition-colors"
+                >
+                  <ExternalLink className="w-4 h-4 mr-1" />
+                  编辑{currentMindmapMode === 'simple' ? '快速' : '详细'}图表
+                </button>
+              )}
+              
               <button
                 onClick={handleDebugMindmap}
                 className="inline-flex items-center px-3 py-1.5 text-sm bg-gray-600 text-white rounded-md hover:bg-gray-700 transition-colors"
@@ -397,7 +461,7 @@ const ViewerPage = () => {
 
       {/* 主要内容区域 */}
       <div className="max-w-7xl mx-auto flex h-[calc(100vh-64px)]">
-        {/* 左侧Markdown阅读器 - 占2/3宽度 */}
+        {/* 左侧Markdown阅读器 */}
         <div className="w-2/3 bg-white border-r shadow-sm overflow-hidden flex flex-col">
           <div className="px-6 py-4 border-b bg-gray-50">
             <h2 className="text-lg font-semibold text-gray-900">文档内容</h2>
@@ -406,7 +470,6 @@ const ViewerPage = () => {
             <div className="prose prose-sm sm:prose lg:prose-lg xl:prose-xl max-w-none">
               <ReactMarkdown
                 components={{
-                  // 自定义渲染组件
                   h1: ({node, ...props}) => <h1 className="text-3xl font-bold mb-4 text-gray-900 border-b pb-2" {...props} />,
                   h2: ({node, ...props}) => <h2 className="text-2xl font-semibold mb-3 text-gray-800 mt-6" {...props} />,
                   h3: ({node, ...props}) => <h3 className="text-xl font-medium mb-2 text-gray-700 mt-4" {...props} />,
@@ -430,38 +493,77 @@ const ViewerPage = () => {
           </div>
         </div>
 
-        {/* 右侧思维导图 - 占1/3宽度 */}
+        {/* 右侧思维导图 */}
         <div className="w-1/3 bg-white overflow-hidden flex flex-col">
           <div className="px-6 py-4 border-b bg-gray-50">
-            <h2 className="text-lg font-semibold text-gray-900">思维导图</h2>
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-semibold text-gray-900">思维导图</h2>
+              <div className="flex items-center space-x-2">
+                <span className="text-xs text-gray-500">
+                  {currentMindmapMode === 'simple' ? '快速模式' : '详细模式'}
+                </span>
+                {autoStarted && (
+                  <span className="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded">
+                    自动生成中
+                  </span>
+                )}
+              </div>
+            </div>
           </div>
           <div className="flex-1 overflow-hidden">
-            {mindmapStatus === 'completed' && document.mermaid_code ? (
+            {((currentMindmapMode === 'standard' && mindmapStatus === 'completed' && document.mermaid_code) ||
+              (currentMindmapMode === 'simple' && simpleMindmapStatus === 'completed' && document.mermaid_code_simple)) ? (
               <div className="h-full overflow-auto p-4">
-                <MermaidDiagram code={document.mermaid_code} />
+                <MermaidDiagram 
+                  code={currentMindmapMode === 'simple' ? document.mermaid_code_simple : document.mermaid_code} 
+                />
               </div>
-            ) : mindmapStatus === 'generating' ? (
+            ) : ((currentMindmapMode === 'standard' && mindmapStatus === 'generating') ||
+                  (currentMindmapMode === 'simple' && simpleMindmapStatus === 'generating')) ? (
               <div className="flex items-center justify-center h-full">
                 <div className="text-center">
                   <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
-                  <p className="text-lg text-gray-700 mb-2">正在生成思维导图...</p>
-                  <p className="text-sm text-gray-500">这可能需要几分钟时间</p>
+                  <p className="text-lg text-gray-700 mb-2">
+                    正在生成{currentMindmapMode === 'simple' ? '快速' : '详细'}思维导图...
+                  </p>
+                  <p className="text-sm text-gray-500">
+                    {currentMindmapMode === 'simple' ? '预计1-2分钟完成' : '这可能需要3-5分钟时间'}
+                  </p>
+                  <div className="mt-4 text-xs text-gray-400">
+                    根据上传时的选择自动生成
+                  </div>
                 </div>
               </div>
-            ) : mindmapStatus === 'error' ? (
+            ) : ((currentMindmapMode === 'standard' && mindmapStatus === 'error') ||
+                  (currentMindmapMode === 'simple' && simpleMindmapStatus === 'error')) ? (
               <div className="flex items-center justify-center h-full p-6">
                 <div className="text-center">
                   <XCircle className="w-12 h-12 text-red-500 mx-auto mb-4" />
                   <p className="text-lg text-red-700 mb-2">生成失败</p>
-                  <p className="text-sm text-gray-600 mb-4">{mindmapError}</p>
+                  <p className="text-sm text-gray-600 mb-4">
+                    {currentMindmapMode === 'simple' ? simpleMindmapError : mindmapError}
+                  </p>
                   <div className="space-y-2">
                     <button
-                      onClick={startMindmapGeneration}
+                      onClick={() => startMindmapGeneration(currentMindmapMode)}
                       className="inline-flex items-center px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 transition-colors"
                     >
                       <RefreshCw className="w-4 h-4 mr-2" />
                       重新生成
                     </button>
+                    <div className="mt-2">
+                      <button
+                        onClick={() => {
+                          const otherMode = currentMindmapMode === 'simple' ? 'standard' : 'simple';
+                          setCurrentMindmapMode(otherMode);
+                          startMindmapGeneration(otherMode);
+                        }}
+                        className="inline-flex items-center px-3 py-1.5 text-sm bg-gray-600 text-white rounded-md hover:bg-gray-700 transition-colors"
+                      >
+                        {currentMindmapMode === 'simple' ? <BarChart3 className="w-3 h-3 mr-1" /> : <Zap className="w-3 h-3 mr-1" />}
+                        尝试{currentMindmapMode === 'simple' ? '详细' : '快速'}模式
+                      </button>
+                    </div>
                     <button
                       onClick={handleDebugMindmap}
                       className="block mx-auto text-xs text-gray-500 hover:text-gray-700"
@@ -471,34 +573,86 @@ const ViewerPage = () => {
                   </div>
                 </div>
               </div>
-            ) : mindmapStatus === 'uploaded' ? (
-              <div className="flex items-center justify-center h-full p-6">
-                <div className="text-center">
-                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto mb-4"></div>
-                  <p className="text-lg text-gray-700 mb-2">准备开始生成...</p>
-                  <p className="text-sm text-gray-500">即将自动开始生成思维导图</p>
-                </div>
-              </div>
             ) : (
               <div className="flex items-center justify-center h-full p-6">
                 <div className="text-center">
-                  <Play className="w-12 h-12 text-gray-400 mx-auto mb-4" />
-                  <p className="text-lg text-gray-700 mb-2">准备生成思维导图</p>
-                  <div className="space-y-2">
-                    <button
-                      onClick={startMindmapGeneration}
-                      className="inline-flex items-center px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors"
-                    >
-                      <Play className="w-4 h-4 mr-2" />
-                      开始生成
-                    </button>
-                    <button
-                      onClick={handleDebugMindmap}
-                      className="block mx-auto text-xs text-gray-500 hover:text-gray-700"
-                    >
-                      查看当前状态
-                    </button>
+                  <div className="w-12 h-12 bg-gray-200 rounded-full mx-auto mb-4 flex items-center justify-center">
+                    {currentMindmapMode === 'simple' ? (
+                      <Zap className="w-6 h-6 text-green-600" />
+                    ) : (
+                      <BarChart3 className="w-6 h-6 text-blue-600" />
+                    )}
                   </div>
+                  <p className="text-lg text-gray-700 mb-2">准备生成思维导图</p>
+                  <p className="text-sm text-gray-500 mb-4">
+                    当前模式：{currentMindmapMode === 'simple' ? '快速简化' : '标准详细'}
+                  </p>
+                  
+                  {!autoStarted && (
+                    <div className="space-y-3">
+                      <button
+                        onClick={() => startMindmapGeneration(currentMindmapMode)}
+                        className={`w-full inline-flex items-center justify-center px-4 py-3 rounded-md transition-colors ${
+                          currentMindmapMode === 'simple' 
+                            ? 'bg-green-600 text-white hover:bg-green-700' 
+                            : 'bg-blue-600 text-white hover:bg-blue-700'
+                        }`}
+                      >
+                        <Play className="w-4 h-4 mr-2" />
+                        开始生成{currentMindmapMode === 'simple' ? '快速' : '详细'}思维导图
+                      </button>
+                      
+                      <button
+                        onClick={() => {
+                          const otherMode = currentMindmapMode === 'simple' ? 'standard' : 'simple';
+                          setCurrentMindmapMode(otherMode);
+                        }}
+                        className="w-full inline-flex items-center justify-center px-3 py-2 text-sm bg-gray-100 text-gray-700 rounded-md hover:bg-gray-200 transition-colors"
+                      >
+                        {currentMindmapMode === 'simple' ? <BarChart3 className="w-3 h-3 mr-1" /> : <Zap className="w-3 h-3 mr-1" />}
+                        切换到{currentMindmapMode === 'simple' ? '详细' : '快速'}模式
+                      </button>
+                    </div>
+                  )}
+                  
+                  {(document.mermaid_code || document.mermaid_code_simple) && (
+                    <div className="border-t pt-4 mt-4">
+                      <p className="text-sm text-gray-600 mb-3">查看已生成的思维导图：</p>
+                      <div className="flex space-x-2">
+                        {document.mermaid_code && (
+                          <button
+                            onClick={() => setCurrentMindmapMode('standard')}
+                            className={`px-3 py-1.5 text-xs rounded transition-colors ${
+                              currentMindmapMode === 'standard'
+                                ? 'bg-blue-100 text-blue-700 border border-blue-300'
+                                : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                            }`}
+                          >
+                            详细版本
+                          </button>
+                        )}
+                        {document.mermaid_code_simple && (
+                          <button
+                            onClick={() => setCurrentMindmapMode('simple')}
+                            className={`px-3 py-1.5 text-xs rounded transition-colors ${
+                              currentMindmapMode === 'simple'
+                                ? 'bg-green-100 text-green-700 border border-green-300'
+                                : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                            }`}
+                          >
+                            快速版本
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                  
+                  <button
+                    onClick={handleDebugMindmap}
+                    className="block mx-auto text-xs text-gray-500 hover:text-gray-700 mt-4"
+                  >
+                    查看当前状态
+                  </button>
                 </div>
               </div>
             )}

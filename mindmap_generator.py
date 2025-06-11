@@ -811,7 +811,7 @@ class MindMapGenerator:
                     response = json_struct
 
             # Advanced character cleaning
-            def clean_characters(self, text: str) -> str:
+            def clean_characters(text: str) -> str:
                 # Remove control characters while preserving valid whitespace
                 text = self.control_chars_regex.sub('', text)
                 
@@ -4284,6 +4284,292 @@ class MindMapGenerator:
         
         return markdown_text.strip()
     
+    async def generate_mindmap_simple(self, document_content: str, request_id: str) -> str:
+        """Generate a mindmap using a single prompt approach for faster generation.
+        
+        This is a simplified version that uses one LLM call to generate the entire mindmap structure,
+        trading some quality for speed.
+        
+        Args:
+            document_content (str): The document content to analyze
+            request_id (str): Unique identifier for request tracking
+            
+        Returns:
+            str: Complete Mermaid mindmap syntax
+            
+        Raises:
+            MindMapGenerationError: If mindmap generation fails
+        """
+        try:
+            logger.info("Starting simple mindmap generation process...", extra={"request_id": request_id})
+            
+            # Initialize tracking
+            self._llm_calls = {
+                'topics': 0,
+                'subtopics': 0,
+                'details': 0,
+                'simple': 0
+            }
+            
+            # Create simple prompt for direct mindmap generation
+            simple_prompt = f"""You are an expert at identifying unique, distinct main topics within content.
+
+            Analyze this document focusing on main conceptual themes and relationships.
+
+            Identify major themes that:
+            - Represent complete, independent ideas
+            - Form logical groupings of related concepts
+            - Support the document's main purpose
+            - Connect to other important themes
+
+            Consider:
+            1. What are the fundamental ideas being presented?
+            2. How do these ideas relate to each other?
+            3. What are the key areas of focus?
+            4. How is the information structured?
+
+            Avoid topics that are:
+            - Too specific (individual examples)
+            - Too broad (entire subject areas)
+            - Isolated facts without context
+            - Purely formatting elements
+
+            Additional requirements:
+            1. Each topic must be truly distinct from others - avoid overlapping concepts
+            2. Combine similar themes into single, well-defined topics
+            3. Ensure topics are specific enough to be meaningful but general enough to support subtopics
+            4. Aim for 4-8 most significant topics that capture the key distinct areas
+            5. Focus on conceptual separation - each topic should represent a unique aspect or dimension
+            6. Avoid topics that are too similar or could be subtopics of each other
+            7. Prioritize broader topics that can encompass multiple subtopics
+            8. Eliminate redundancy - each topic should cover a distinct area with no overlap
+
+            IMPORTANT: 
+            1. DO NOT include specific statistics, percentages, or numerical data unless explicitly stated in the source text
+            2. DO NOT refer to modern studies, surveys, or analyses that aren't mentioned in the document
+            3. DO NOT make up correlation coefficients, growth rates, or other numerical relationships
+            4. Keep your content strictly based on what's in the document, not general knowledge about the topic
+            5. Use general descriptions rather than specific numbers if the document doesn't provide exact figures
+
+            Current content:
+            {document_content[:4000]}
+
+            IMPORTANT: Respond with ONLY a JSON array of strings representing the main distinct topics.
+            Example format: ["First Distinct Topic", "Second Distinct Topic", "Third Distinct Topic"]
+
+            Format: Return a JSON array of primary themes or concept areas."""
+
+            # Make single LLM call
+            logger.info("Making single LLM call for simplified mindmap generation...", extra={"request_id": request_id})
+            
+            response = await self.optimizer.generate_completion(
+                simple_prompt,
+                max_tokens=3000,
+                request_id=request_id,
+                task="simple_mindmap_generation"
+            )
+            
+            self._llm_calls['simple'] = 1
+            
+            if not response:
+                raise MindMapGenerationError("No response from LLM for simple mindmap generation")
+
+            # Parse the response
+            try:
+                # Use the simpler _parse_llm_response method that handles arrays better
+                logger.debug(f"Raw simple generation response: {response}", 
+                            extra={"request_id": request_id})
+                
+                parsed_response = self._parse_llm_response(response, "array")
+                
+                # Validate structure - should be array of strings
+                if not isinstance(parsed_response, list):
+                    logger.warning(f"Expected list, got {type(parsed_response)}")
+                    raise ValueError("Expected array of topic strings")
+                
+                # Convert to internal format with simplified structure
+                concepts = {
+                    'central_theme': {
+                        'name': 'Document Mindmap',
+                        'subtopics': []
+                    }
+                }
+                
+                # Process each topic string
+                for topic_name in parsed_response:
+                    if isinstance(topic_name, str) and topic_name.strip():
+                        cleaned_name = re.sub(r'[`*_#]', '', topic_name)
+                        cleaned_name = ' '.join(cleaned_name.split())
+                        
+                        # Select appropriate emoji for topic
+                        emoji = await self._select_emoji(cleaned_name, 'topic')
+                        
+                        # Create simplified topic structure
+                        topic = {
+                            'name': cleaned_name,
+                            'emoji': emoji,
+                            'importance': 'high',
+                            'subtopics': [{
+                                'name': f'{cleaned_name} - 关键要点',
+                                'emoji': '📋',
+                                'importance': 'medium',
+                                'details': [
+                                    {
+                                        'text': f'关于{cleaned_name}的重要信息',
+                                        'importance': 'medium'
+                                    },
+                                    {
+                                        'text': f'{cleaned_name}的核心概念',
+                                        'importance': 'medium'
+                                    }
+                                ]
+                            }]
+                        }
+                        
+                        concepts['central_theme']['subtopics'].append(topic)
+                
+                # If no topics were extracted, create a fallback
+                if not concepts['central_theme']['subtopics']:
+                    logger.warning("No topics extracted, creating fallback structure")
+                    concepts['central_theme']['subtopics'] = [{
+                        'name': 'Document Summary',
+                        'emoji': '📄',
+                        'importance': 'high',
+                        'subtopics': [{
+                            'name': 'Key Content',
+                            'emoji': '📋',
+                            'importance': 'medium',
+                            'details': [
+                                {'text': 'Document analysis completed', 'importance': 'medium'},
+                                {'text': 'Content processed successfully', 'importance': 'medium'}
+                            ]
+                        }]
+                    }]
+                
+                # Generate Mermaid syntax
+                mermaid_syntax = self._generate_mermaid_mindmap(concepts)
+                
+                logger.info(
+                    f"Simple mindmap generation completed successfully. "
+                    f"Topics: {len(concepts['central_theme']['subtopics'])}, "
+                    f"LLM calls: {self._llm_calls['simple']}, "
+                    f"Output length: {len(mermaid_syntax)} characters",
+                    extra={"request_id": request_id}
+                )
+                
+                return mermaid_syntax
+                
+            except json.JSONDecodeError as e:
+                logger.error(f"Failed to parse LLM response as JSON: {str(e)}")
+                # Fallback: try to extract basic structure from text
+                return await self._fallback_simple_generation(response, request_id)
+                
+        except Exception as e:
+            logger.error(f"Error in simple mindmap generation: {str(e)}", extra={"request_id": request_id})
+            raise MindMapGenerationError(f"Failed to generate simple mindmap: {str(e)}")
+
+    async def _fallback_simple_generation(self, response: str, request_id: str) -> str:
+        """Fallback method when JSON parsing fails - extract basic structure from text."""
+        try:
+            logger.info("Using fallback simple generation method...", extra={"request_id": request_id})
+            
+            # Create basic structure from response text
+            lines = response.strip().split('\n')
+            topics = []
+            
+            current_topic = None
+            current_subtopic = None
+            
+            for line in lines:
+                line = line.strip()
+                if not line:
+                    continue
+                    
+                # Look for topic indicators
+                if any(marker in line.lower() for marker in ['topic:', 'main:', '主题:', '##']):
+                    if current_topic:
+                        topics.append(current_topic)
+                    current_topic = {
+                        'name': line.split(':', 1)[-1].strip() if ':' in line else line.replace('#', '').strip(),
+                        'emoji': '📄',
+                        'importance': 'high',
+                        'subtopics': []
+                    }
+                    current_subtopic = None
+                    
+                # Look for subtopic indicators
+                elif any(marker in line.lower() for marker in ['subtopic:', 'sub:', '子主题:', '###']):
+                    if current_topic:
+                        if current_subtopic:
+                            current_topic['subtopics'].append(current_subtopic)
+                        current_subtopic = {
+                            'name': line.split(':', 1)[-1].strip() if ':' in line else line.replace('#', '').strip(),
+                            'emoji': '📋',
+                            'importance': 'medium',
+                            'details': []
+                        }
+                        
+                # Look for detail indicators
+                elif any(marker in line for marker in ['-', '•', '*', '1.', '2.', '3.']):
+                    if current_subtopic:
+                        detail_text = line.lstrip('-•*0123456789. ').strip()
+                        if detail_text:
+                            current_subtopic['details'].append({
+                                'text': detail_text,
+                                'importance': 'medium'
+                            })
+            
+            # Add final items
+            if current_subtopic and current_topic:
+                current_topic['subtopics'].append(current_subtopic)
+            if current_topic:
+                topics.append(current_topic)
+            
+            # If no topics found, create a basic structure
+            if not topics:
+                topics = [{
+                    'name': 'Document Summary',
+                    'emoji': '📄',
+                    'importance': 'high',
+                    'subtopics': [{
+                        'name': 'Key Points',
+                        'emoji': '📋',
+                        'importance': 'medium',
+                        'details': [
+                            {'text': 'Content analysis completed', 'importance': 'medium'},
+                            {'text': 'Basic structure extracted', 'importance': 'medium'}
+                        ]
+                    }]
+                }]
+            
+            # Create concepts structure
+            concepts = {
+                'central_theme': {
+                    'name': 'Document Mindmap',
+                    'subtopics': topics
+                }
+            }
+            
+            # Generate Mermaid syntax
+            mermaid_syntax = self._generate_mermaid_mindmap(concepts)
+            
+            logger.info(
+                f"Fallback simple generation completed. Topics: {len(topics)}",
+                extra={"request_id": request_id}
+            )
+            
+            return mermaid_syntax
+            
+        except Exception as e:
+            logger.error(f"Fallback simple generation failed: {str(e)}")
+            # Return minimal mindmap
+            return """mindmap
+    ((📄))
+        ((📋 Document Analysis))
+            (Error in Processing)
+                [Simple generation failed]
+                [Please try again]"""
+
 def generate_mermaid_html(mermaid_code):
     # Remove leading/trailing triple backticks if present
     mermaid_code = mermaid_code.strip()
