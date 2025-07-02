@@ -9,9 +9,13 @@ from datetime import datetime
 from pathlib import Path
 import logging
 import base64
+from typing import List, Dict, Any
 
 # 导入现有的思维导图生成器
-from mindmap_generator import MindMapGenerator, MinimalDatabaseStub, get_logger, generate_mermaid_html
+from mindmap_generator import MindMapGenerator, MinimalDatabaseStub, get_logger, generate_mermaid_html, DocumentOptimizer
+
+# 导入文档解析器
+from document_parser import DocumentParser
 
 # 导入MinerU相关模块
 from magic_pdf.data.data_reader_writer import FileBasedDataWriter, FileBasedDataReader
@@ -43,6 +47,165 @@ PDF_OUTPUT_DIR.mkdir(exist_ok=True)
 
 # 存储文档状态的内存数据库
 document_status = {}
+
+# 存储AI辅助阅读问题的内存数据库
+reading_questions = {}
+
+# 存储文档结构的内存数据库
+document_structures = {}
+
+class ReadingAssistant:
+    """AI辅助阅读助手"""
+    
+    def __init__(self):
+        self.generator = MindMapGenerator()
+        self.document_parser = DocumentParser()
+        # 添加DocumentOptimizer实例用于AI调用
+        self.optimizer = DocumentOptimizer()
+    
+    def split_text_into_chunks(self, text: str, document_id: str) -> List[Dict[str, Any]]:
+        """将文档按Markdown标题层级分块并分配唯一标识符"""
+        try:
+            # 使用新的文档解析器
+            chunks = self.document_parser.parse_to_chunks(text, document_id)
+            
+            # 同时保存文档结构用于目录生成
+            root = self.document_parser.parse_document(text, document_id)
+            toc = self.document_parser.generate_toc(root)
+            
+            document_structures[document_id] = {
+                'structure': root.to_dict(),
+                'toc': toc,
+                'chunks': chunks
+            }
+            
+            print(f"📄 [文本分块] 文档 {document_id} 分为 {len(chunks)} 个结构化块")
+            for i, chunk in enumerate(chunks[:3]):  # 显示前3个块的信息
+                print(f"   块 {i}: {chunk.get('title', '无标题')} (级别 {chunk.get('level', 0)})")
+            
+            return chunks
+            
+        except Exception as e:
+            print(f"❌ [分块错误] {str(e)}")
+            return []
+    
+    async def generate_questions_for_chunk(self, chunk: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """为文本块生成AI问题"""
+        try:
+            content = chunk['content']
+            if len(content.strip()) < 50:  # 太短的内容不生成问题
+                return []
+            
+            # 构建更智能的prompt，考虑标题层级
+            title = chunk.get('title', '无标题内容')
+            level = chunk.get('level', 0)
+            heading = chunk.get('heading', '')
+            
+            context_info = ""
+            if level > 0:
+                context_info = f"这是一个{level}级标题「{title}」下的内容。"
+            
+            prompt = f"""你是一个AI阅读助手。请根据以下文本内容，生成1-2个读者在阅读到这里时可能会思考的、有启发性的问题。
+
+{context_info}
+
+文本内容：
+"{content}"
+
+请以JSON格式返回，包含问题列表：
+[
+  {{"question": "问题1的内容...", "type": "理解"}},
+  {{"question": "问题2的内容...", "type": "思考"}}
+]
+
+要求：
+1. 问题应该具有启发性和思考性，能帮助读者更深入理解
+2. 问题类型可以是："理解"、"思考"、"应用"、"分析"、"评价"、"联想"
+3. 问题长度适中，不超过50个字符
+4. 如果内容较简单，可以只生成1个问题
+5. 问题应该与该段落的主题紧密相关
+"""
+            
+            # 使用DocumentOptimizer的generate_completion方法
+            response = await self.optimizer.generate_completion(
+                prompt, 
+                max_tokens=500,
+                task="生成阅读辅助问题"
+            )
+            
+            if not response:
+                return []
+            
+            # 解析JSON响应
+            try:
+                questions_data = self.generator._parse_llm_response(response, "array")
+                questions = []
+                
+                for q_data in questions_data:
+                    if isinstance(q_data, dict) and 'question' in q_data:
+                        question = {
+                            'question': q_data['question'],
+                            'type': q_data.get('type', '思考'),
+                            'chunk_id': chunk['chunk_id'],
+                            'paragraph_index': chunk['paragraph_index'],
+                            'document_id': chunk['document_id'],
+                            'level': chunk.get('level', 0),
+                            'title': chunk.get('title', ''),
+                            'context': title
+                        }
+                        questions.append(question)
+                
+                print(f"✅ [问题生成] {title} (级别{level}) 生成 {len(questions)} 个问题")
+                return questions
+                
+            except Exception as parse_error:
+                print(f"❌ [解析错误] {str(parse_error)}")
+                return []
+                
+        except Exception as e:
+            print(f"❌ [问题生成错误] {str(e)}")
+            return []
+    
+    async def generate_all_questions(self, document_id: str, content: str) -> Dict[str, Any]:
+        """为整个文档生成所有问题"""
+        try:
+            print(f"🤖 [AI助手] 开始为文档 {document_id} 生成阅读辅助问题...")
+            
+            # 分块
+            chunks = self.split_text_into_chunks(content, document_id)
+            if not chunks:
+                return {"success": False, "error": "文档分块失败"}
+            
+            # 为每个chunk生成问题（批量处理）
+            all_questions = []
+            for chunk in chunks:
+                questions = await self.generate_questions_for_chunk(chunk)
+                all_questions.extend(questions)
+                
+                # 避免API调用过于频繁
+                await asyncio.sleep(0.5)
+            
+            # 存储问题
+            reading_questions[document_id] = {
+                'questions': all_questions,
+                'chunks': chunks,
+                'total_questions': len(all_questions),
+                'generated_at': datetime.now().isoformat()
+            }
+            
+            print(f"✅ [AI助手] 文档 {document_id} 共生成 {len(all_questions)} 个问题")
+            return {
+                "success": True, 
+                "total_questions": len(all_questions),
+                "questions": all_questions
+            }
+            
+        except Exception as e:
+            print(f"❌ [AI助手错误] {str(e)}")
+            return {"success": False, "error": str(e)}
+
+# 创建阅读助手实例
+reading_assistant = ReadingAssistant()
 
 async def process_pdf_to_markdown(pdf_file_path: str, document_id: str) -> str:
     """
@@ -392,7 +555,11 @@ async def get_document_status(document_id: str):
         "mermaid_code": doc_info.get("mermaid_code"),  # 标准模式代码
         "mermaid_code_simple": doc_info.get("mermaid_code_simple"),  # 简化模式代码
         "error": doc_info.get("error"),  # 标准模式错误
-        "error_simple": doc_info.get("error_simple")  # 简化模式错误
+        "error_simple": doc_info.get("error_simple"),  # 简化模式错误
+        # 添加阅读问题相关状态
+        "reading_questions_status": doc_info.get("reading_questions_status", "not_started"),
+        "has_reading_questions": document_id in reading_questions,
+        "reading_questions_count": reading_questions.get(document_id, {}).get("total_questions", 0)
     }
     
     # 如果是PDF文件，添加PDF相关信息
@@ -455,8 +622,224 @@ async def health_check():
 
 @app.get("/")
 async def root():
-    """根路径"""
-    return {"message": "Mindmap Generator API", "docs": "/docs"}
+    return {"message": "Mindmap Generator API is running"}
+
+# AI辅助阅读相关API端点
+
+@app.post("/api/generate-reading-questions/{document_id}")
+async def generate_reading_questions(document_id: str):
+    """为文档生成AI辅助阅读问题"""
+    try:
+        if document_id not in document_status:
+            raise HTTPException(status_code=404, detail="文档不存在")
+        
+        document = document_status[document_id]
+        content = document.get('content')
+        
+        if not content:
+            raise HTTPException(status_code=400, detail="文档内容为空")
+        
+        # 检查是否已经有问题
+        if document_id in reading_questions:
+            existing_questions = reading_questions[document_id]
+            return {
+                "success": True,
+                "message": "问题已存在",
+                "total_questions": existing_questions['total_questions'],
+                "questions": existing_questions['questions']
+            }
+        
+        # 生成问题
+        result = await reading_assistant.generate_all_questions(document_id, content)
+        
+        if result['success']:
+            # 更新文档状态
+            document_status[document_id]['reading_questions_status'] = 'completed'
+            return result
+        else:
+            document_status[document_id]['reading_questions_status'] = 'error'
+            raise HTTPException(status_code=500, detail=result.get('error', '生成问题失败'))
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Generate reading questions error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"生成问题失败: {str(e)}")
+
+@app.get("/api/reading-questions/{document_id}")
+async def get_reading_questions(document_id: str):
+    """获取文档的AI辅助阅读问题"""
+    try:
+        if document_id not in reading_questions:
+            return {
+                "success": False,
+                "message": "尚未生成问题",
+                "questions": []
+            }
+        
+        questions_data = reading_questions[document_id]
+        return {
+            "success": True,
+            "total_questions": questions_data['total_questions'],
+            "questions": questions_data['questions'],
+            "chunks": questions_data['chunks'],
+            "generated_at": questions_data['generated_at']
+        }
+        
+    except Exception as e:
+        logger.error(f"Get reading questions error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"获取问题失败: {str(e)}")
+
+@app.get("/api/reading-questions/{document_id}/paragraph/{paragraph_index}")
+async def get_questions_by_paragraph(document_id: str, paragraph_index: int):
+    """获取特定段落的问题"""
+    try:
+        if document_id not in reading_questions:
+            return {
+                "success": False,
+                "questions": []
+            }
+        
+        questions_data = reading_questions[document_id]
+        paragraph_questions = [
+            q for q in questions_data['questions'] 
+            if q['paragraph_index'] == paragraph_index
+        ]
+        
+        return {
+            "success": True,
+            "questions": paragraph_questions,
+            "paragraph_index": paragraph_index
+        }
+        
+    except Exception as e:
+        logger.error(f"Get paragraph questions error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"获取段落问题失败: {str(e)}")
+
+@app.delete("/api/reading-questions/{document_id}")
+async def delete_reading_questions(document_id: str):
+    """删除文档的AI辅助阅读问题"""
+    try:
+        if document_id in reading_questions:
+            del reading_questions[document_id]
+        
+        if document_id in document_status:
+            document_status[document_id]['reading_questions_status'] = 'not_started'
+        
+        return {
+            "success": True,
+            "message": "问题已删除"
+        }
+        
+    except Exception as e:
+        logger.error(f"Delete reading questions error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"删除问题失败: {str(e)}")
+
+# 文档结构和目录相关API端点
+
+@app.get("/api/document-structure/{document_id}")
+async def get_document_structure(document_id: str):
+    """获取文档的层级结构"""
+    try:
+        if document_id not in document_structures:
+            return {
+                "success": False,
+                "message": "文档结构尚未生成",
+                "structure": None,
+                "toc": []
+            }
+        
+        structure_data = document_structures[document_id]
+        return {
+            "success": True,
+            "structure": structure_data['structure'],
+            "toc": structure_data['toc'],
+            "chunks_count": len(structure_data['chunks'])
+        }
+        
+    except Exception as e:
+        logger.error(f"Get document structure error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"获取文档结构失败: {str(e)}")
+
+@app.get("/api/document-toc/{document_id}")
+async def get_document_toc(document_id: str):
+    """获取文档目录"""
+    try:
+        if document_id not in document_structures:
+            # 如果结构不存在，尝试从文档内容生成
+            if document_id in document_status:
+                content = document_status[document_id].get('content')
+                if content:
+                    parser = DocumentParser()
+                    root = parser.parse_document(content, document_id)
+                    toc = parser.generate_toc(root)
+                    
+                    # 保存结构
+                    document_structures[document_id] = {
+                        'structure': root.to_dict(),
+                        'toc': toc,
+                        'chunks': parser.parse_to_chunks(content, document_id)
+                    }
+                    
+                    return {
+                        "success": True,
+                        "toc": toc
+                    }
+            
+            return {
+                "success": False,
+                "message": "文档目录尚未生成",
+                "toc": []
+            }
+        
+        structure_data = document_structures[document_id]
+        return {
+            "success": True,
+            "toc": structure_data['toc']
+        }
+        
+    except Exception as e:
+        logger.error(f"Get document TOC error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"获取文档目录失败: {str(e)}")
+
+@app.post("/api/generate-document-structure/{document_id}")
+async def generate_document_structure(document_id: str):
+    """生成或重新生成文档结构"""
+    try:
+        if document_id not in document_status:
+            raise HTTPException(status_code=404, detail="文档不存在")
+        
+        content = document_status[document_id].get('content')
+        if not content:
+            raise HTTPException(status_code=400, detail="文档内容为空")
+        
+        # 使用文档解析器生成结构
+        parser = DocumentParser()
+        root = parser.parse_document(content, document_id)
+        toc = parser.generate_toc(root)
+        chunks = parser.parse_to_chunks(content, document_id)
+        
+        # 保存结构
+        document_structures[document_id] = {
+            'structure': root.to_dict(),
+            'toc': toc,
+            'chunks': chunks
+        }
+        
+        print(f"📄 [文档结构] 为文档 {document_id} 生成了 {len(toc)} 个目录项，{len(chunks)} 个内容块")
+        
+        return {
+            "success": True,
+            "message": "文档结构生成成功",
+            "toc_items": len(toc),
+            "chunks_count": len(chunks)
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Generate document structure error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"生成文档结构失败: {str(e)}")
 
 if __name__ == "__main__":
     import uvicorn

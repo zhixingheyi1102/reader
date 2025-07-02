@@ -10,42 +10,48 @@
 /* Markdown内容样式优化 */
 .prose {
   max-width: none !important;
+  font-size: 16px !important;
 }
 
 .prose h1 {
-  @apply text-3xl font-bold text-gray-900 mb-4 pb-2 border-b border-gray-200;
+  @apply text-4xl font-bold text-gray-900 dark:text-gray-100 mb-4 pb-2 border-b border-gray-200 dark:border-gray-700;
 }
 
 .prose h2 {
-  @apply text-2xl font-semibold text-gray-800 mb-3 mt-8;
+  @apply text-3xl font-semibold text-gray-800 dark:text-gray-200 mb-3 mt-8;
 }
 
 .prose h3 {
-  @apply text-xl font-medium text-gray-700 mb-2 mt-6;
+  @apply text-2xl font-medium text-gray-700 dark:text-gray-300 mb-2 mt-6;
 }
 
 .prose p {
-  @apply text-gray-600 mb-4 leading-relaxed;
+  @apply text-gray-600 dark:text-gray-300 mb-4 leading-relaxed;
+  font-size: 16px !important;
+  line-height: 1.7 !important;
 }
 
 .prose ul {
-  @apply list-disc list-inside mb-4 space-y-1 text-gray-600;
+  @apply list-disc list-inside mb-4 space-y-1 text-gray-600 dark:text-gray-300;
+  font-size: 16px !important;
 }
 
 .prose ol {
-  @apply list-decimal list-inside mb-4 space-y-1 text-gray-600;
+  @apply list-decimal list-inside mb-4 space-y-1 text-gray-600 dark:text-gray-300;
+  font-size: 16px !important;
 }
 
 .prose blockquote {
-  @apply border-l-4 border-blue-500 pl-4 italic text-gray-700 mb-4 bg-blue-50 py-2;
+  @apply border-l-4 border-blue-500 dark:border-blue-400 pl-4 italic text-gray-700 dark:text-gray-300 mb-4 bg-blue-50 dark:bg-blue-900/20 py-2;
+  font-size: 16px !important;
 }
 
 .prose code {
-  @apply bg-gray-100 px-1 py-0.5 rounded text-sm font-mono text-gray-800;
+  @apply bg-gray-100 dark:bg-gray-700 px-1 py-0.5 rounded text-sm font-mono text-gray-800 dark:text-gray-200;
 }
 
 .prose pre {
-  @apply bg-gray-100 p-4 rounded-lg overflow-x-auto mb-4;
+  @apply bg-gray-100 dark:bg-gray-800 p-4 rounded-lg overflow-x-auto mb-4;
 }
 
 .prose pre code {
@@ -57,6 +63,117 @@
   @apply w-full h-auto;
 }
 
+/* 暗模式下的Mermaid图表样式 */
+:root.dark .mermaid {
+  filter: brightness(0.8) contrast(1.2);
+}
+
+/* Mermaid节点高亮样式 - 只高亮边框，不改变填充色 */
+.mermaid svg g.mermaid-highlighted-node > rect,
+.mermaid svg g.mermaid-highlighted-node > circle,
+.mermaid svg g.mermaid-highlighted-node > ellipse,
+.mermaid svg g.mermaid-highlighted-node > polygon,
+.mermaid svg .mermaid-highlighted-node rect,
+.mermaid svg .mermaid-highlighted-node circle,
+.mermaid svg .mermaid-highlighted-node ellipse,
+.mermaid svg .mermaid-highlighted-node polygon {
+  stroke: #FB923C !important;
+  stroke-width: 3px !important;
+  filter: drop-shadow(0 0 8px rgba(251, 146, 60, 0.6)) drop-shadow(0 0 16px rgba(251, 146, 60, 0.3)) !important;
+  /* 不改变填充色，保持原有颜色 */
+}
+
+/* 暗模式下的Mermaid高亮样式 */
+:root.dark .mermaid svg g.mermaid-highlighted-node > rect,
+:root.dark .mermaid svg g.mermaid-highlighted-node > circle,
+:root.dark .mermaid svg g.mermaid-highlighted-node > ellipse,
+:root.dark .mermaid svg g.mermaid-highlighted-node > polygon,
+:root.dark .mermaid svg .mermaid-highlighted-node rect,
+:root.dark .mermaid svg .mermaid-highlighted-node circle,
+:root.dark .mermaid svg .mermaid-highlighted-node ellipse,
+:root.dark .mermaid svg .mermaid-highlighted-node polygon {
+  stroke: #FED7AA !important;
+  stroke-width: 3px !important;
+  filter: drop-shadow(0 0 8px rgba(253, 215, 170, 0.8)) drop-shadow(0 0 16px rgba(253, 215, 170, 0.4)) !important;
+}
+
+/* 确保连接线不受高亮影响 */
+.mermaid svg g.mermaid-highlighted-node > path,
+.mermaid svg g.mermaid-highlighted-node > line,
+.mermaid svg .mermaid-highlighted-node path,
+.mermaid svg .mermaid-highlighted-node line {
+  stroke: #9ca3af !important;
+  stroke-width: 1.5px !important;
+  fill: none !important;
+  filter: none !important;
+}
+
+/* 暗模式下的连接线 */
+:root.dark .mermaid svg g.mermaid-highlighted-node > path,
+:root.dark .mermaid svg g.mermaid-highlighted-node > line,
+:root.dark .mermaid svg .mermaid-highlighted-node path,
+:root.dark .mermaid svg .mermaid-highlighted-node line {
+  stroke: #6b7280 !important;
+}
+
+/* 活跃文本块样式 - 静止状态，无动画 */
+.content-block {
+  border-left: 4px solid transparent;
+}
+
+.content-block.active {
+  border-left-color: #FB923C !important;
+  /* 不设置任何其他样式，确保只有边框颜色改变 */
+}
+
+/* 暗模式下的活跃文本块 */
+:root.dark .content-block.active {
+  border-left-color: #FED7AA !important;
+}
+
+/* 确保文本内容不受Mermaid节点样式影响 */
+.content-block,
+.content-block *,
+.prose,
+.prose * {
+  filter: none !important;
+}
+
+/* 强制确保活跃内容块内的所有元素都不受filter影响 */
+.content-block.active,
+.content-block.active *,
+.content-block.active p,
+.content-block.active h1,
+.content-block.active h2,
+.content-block.active h3,
+.content-block.active h4,
+.content-block.active h5,
+.content-block.active h6,
+.content-block.active span,
+.content-block.active div {
+  color: inherit !important;
+  background-color: transparent !important;
+  background: none !important;
+  filter: none !important;
+}
+
+/* 防止选择状态影响显示 */
+.content-block.active::selection,
+.content-block.active *::selection {
+  background-color: rgba(59, 130, 246, 0.2) !important;
+  color: inherit !important;
+}
+
+/* 章节高亮样式 - 静止状态，无动画 */
+.section-highlighted {
+  border-left: 4px solid #FB923C;
+}
+
+/* 暗模式下的章节高亮 */
+:root.dark .section-highlighted {
+  border-left-color: #FED7AA;
+}
+
 /* 滚动条样式 */
 ::-webkit-scrollbar {
   width: 6px;
@@ -64,15 +181,15 @@
 }
 
 ::-webkit-scrollbar-track {
-  @apply bg-gray-100;
+  @apply bg-gray-100 dark:bg-gray-800;
 }
 
 ::-webkit-scrollbar-thumb {
-  @apply bg-gray-300 rounded;
+  @apply bg-gray-300 dark:bg-gray-600 rounded;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  @apply bg-gray-400;
+  @apply bg-gray-400 dark:bg-gray-500;
 }
 
 /* 拖拽上传区域样式 */
@@ -85,22 +202,31 @@
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
 }
 
+/* 暗模式下的拖拽上传区域 */
+:root.dark .upload-area:hover {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
 /* 响应式调整 */
 @media (max-width: 768px) {
   .prose {
-    @apply text-sm;
+    font-size: 15px !important;
   }
   
   .prose h1 {
-    @apply text-2xl;
+    @apply text-3xl;
   }
   
   .prose h2 {
-    @apply text-xl;
+    @apply text-2xl;
   }
   
   .prose h3 {
-    @apply text-lg;
+    @apply text-xl;
+  }
+  
+  .prose p {
+    font-size: 15px !important;
   }
 }
 
@@ -136,9 +262,31 @@
 
 /* 工具提示样式 */
 .tooltip {
-  @apply invisible absolute z-10 py-2 px-3 text-sm font-medium text-white bg-gray-900 rounded-lg shadow-sm opacity-0 transition-opacity duration-300;
+  @apply invisible absolute z-10 py-2 px-3 text-sm font-medium text-white bg-gray-900 dark:bg-gray-700 rounded-lg shadow-sm opacity-0 transition-opacity duration-300;
 }
 
 .tooltip-trigger:hover .tooltip {
   @apply visible opacity-100;
-} 
+}
+
+/* 暗模式下的Toast通知样式 */
+:root {
+  --toast-bg: #363636;
+  --toast-color: #fff;
+}
+
+:root.dark {
+  --toast-bg: #374151;
+  --toast-color: #f9fafb;
+}
+
+/* 移除不需要的样式 */
+/* .content-block-highlighted 和其他背景高亮样式已删除 */
+
+/* 
+高亮样式说明：
+- 亮模式：使用#FB923C (橙色-400)作为高亮色
+- 暗模式：使用#FED7AA (橙色-200)作为高亮色，更适合暗色背景
+- Mermaid节点：仅高亮边框和添加发光效果，不改变填充色
+- 文本块：仅左侧边框高亮，不改变背景和文字颜色
+*/ 

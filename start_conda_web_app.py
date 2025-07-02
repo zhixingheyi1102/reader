@@ -14,6 +14,8 @@ from pathlib import Path
 import threading
 import webbrowser
 from urllib.parse import urlparse
+import urllib.request
+import urllib.error
 
 def print_status(message, status="INFO"):
     """打印带状态的消息"""
@@ -244,24 +246,40 @@ def start_frontend():
                                   capture_output=True, text=True, timeout=300)
             print_status("前端依赖安装完成", "SUCCESS")
         
-        # 启动React开发服务器
+        # 启动React开发服务器 - 不重定向输出，显示编译信息
         print_status(f"使用 {npm_command} 启动前端服务...", "INFO")
+        print_status("前端编译信息:", "INFO")
+        print_status("-" * 30, "INFO")
+        
         frontend_process = subprocess.Popen([
             npm_command, "start"
-        ], cwd=frontend_dir, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        ], cwd=frontend_dir)  # 移除stdout和stderr重定向
         
-        # 等待前端服务启动
-        time.sleep(5)
+        # 等待前端服务启动 - 增加等待时间
+        print_status("等待前端编译完成...", "INFO")
         
-        if frontend_process.poll() is None:
-            print_status("前端服务启动成功 (http://localhost:3000)", "SUCCESS")
-            return frontend_process
-        else:
-            stdout, stderr = frontend_process.communicate()
-            print_status(f"前端服务启动失败", "ERROR")
-            if stderr:
-                print_status(f"错误信息: {stderr}", "ERROR")
-            return None
+        # 检查服务是否真的可访问
+        max_attempts = 30  # 最多等待30次，每次2秒
+        for attempt in range(max_attempts):
+            if frontend_process.poll() is not None:
+                print_status("前端进程意外退出", "ERROR")
+                return None
+                
+            try:
+                # 尝试访问前端服务
+                response = urllib.request.urlopen("http://localhost:3000", timeout=2)
+                if response.status == 200:
+                    print_status("前端服务启动成功 (http://localhost:3000)", "SUCCESS")
+                    return frontend_process
+            except (urllib.error.URLError, urllib.error.HTTPError, OSError):
+                # 服务还没准备好，继续等待
+                time.sleep(2)
+                if attempt % 5 == 0:  # 每10秒显示一次进度
+                    print_status(f"正在等待前端启动... ({attempt*2}s)", "INFO")
+        
+        print_status("前端服务启动超时，但进程仍在运行", "WARNING")
+        print_status("请手动检查 http://localhost:3000 是否可访问", "INFO")
+        return frontend_process
             
     except subprocess.CalledProcessError as e:
         print_status(f"启动前端服务时出错: {e}", "ERROR")
@@ -280,7 +298,7 @@ def start_frontend():
 def open_browser():
     """延迟打开浏览器"""
     def delayed_open():
-        time.sleep(8)  # 等待服务完全启动
+        time.sleep(15)  # 等待服务完全启动，增加到15秒
         try:
             webbrowser.open("http://localhost:3000")
             print_status("已打开浏览器", "SUCCESS")
