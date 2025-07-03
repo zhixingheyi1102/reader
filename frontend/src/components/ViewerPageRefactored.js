@@ -1,6 +1,6 @@
-import React, { useState, useRef, useCallback } from 'react';
+import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { ArrowLeft, Download, Eye, EyeOff, FileText, File, Bot, Zap, BarChart3 } from 'lucide-react';
+import { ArrowLeft, Download, Eye, EyeOff, FileText, File, Bot } from 'lucide-react';
 import MermaidDiagram from './MermaidDiagram';
 import ThemeToggle from './ThemeToggle';
 
@@ -23,9 +23,6 @@ const ViewerPageRefactored = () => {
   const containerRef = useRef(null);
   const mermaidDiagramRef = useRef(null);
   
-  // 从上传页面传递的模式选择
-  const selectedMode = location.state?.selectedMode || 'simple';
-  const [currentMindmapMode, setCurrentMindmapMode] = useState(selectedMode);
   const [showToc, setShowToc] = useState(false);
 
   // 使用文档查看器 hook
@@ -47,10 +44,6 @@ const ViewerPageRefactored = () => {
 
   // 使用思维导图生成 hook
   const {
-    mindmapStatus,
-    mindmapError,
-    simpleMindmapStatus,
-    simpleMindmapError,
     demoMindmapStatus,
     startMindmapGeneration,
     handleDownloadMarkdown,
@@ -67,7 +60,7 @@ const ViewerPageRefactored = () => {
     handleMouseDown
   } = usePanelResize();
 
-  // 使用AI阅读助手 hook
+  // 使用AI阅读助手 hook (禁用状态)
   const {
     readingQuestionsStatus,
     readingQuestions,
@@ -82,17 +75,20 @@ const ViewerPageRefactored = () => {
   // 使用滚动检测 hook
   const {
     activeChunkId,
+    activeContentBlockId, // 添加段落级状态
     contentChunks,
     handleSectionRef,
     handleContentBlockRef,
     scrollToSection,
     scrollToContentBlock,
-    highlightContentBlock,
-    highlightMermaidNode
+    highlightParagraph,
+    highlightMermaidNode,
+    updateDynamicMapping,
+    dynamicMapping
   } = useScrollDetection(
     containerRef,
     documentId,
-    currentMindmapMode,
+    'argument', // 论证结构分析模式
     showReadingAssistant,
     checkForNewQuestions,
     mermaidDiagramRef
@@ -102,12 +98,10 @@ const ViewerPageRefactored = () => {
   const handleNodeClick = useCallback((nodeId) => {
     console.log('🖱️ [父组件] 接收到节点点击事件:', nodeId);
     
-    // 调用滚动到对应文本块的函数
+    // 只滚动到对应文本块，不手动高亮
+    // 高亮将由自动滚动检测来处理
     scrollToContentBlock(nodeId);
-    
-    // 同时高亮对应的节点（如果需要的话）
-    highlightMermaidNode(nodeId);
-  }, [scrollToContentBlock, highlightMermaidNode]);
+  }, [scrollToContentBlock]);
 
   // 文档查看区域切换按钮
   const ViewModeToggle = () => {
@@ -140,6 +134,51 @@ const ViewerPageRefactored = () => {
       </div>
     );
   };
+
+  // 跟踪chunks加载状态
+  const [chunksLoaded, setChunksLoaded] = useState(false);
+
+  // 当documentId改变时，重置chunks加载状态
+  useEffect(() => {
+    setChunksLoaded(false);
+    contentChunks.current = []; // 也清空之前的chunks
+  }, [documentId]);
+
+  // 在文档加载完成后，加载文档结构和chunks
+  useEffect(() => {
+    // 只对真实上传的文档（非示例模式）加载结构，且只加载一次
+    if (document && !documentId.startsWith('demo-') && document.content && !chunksLoaded) {
+      const loadChunks = async () => {
+        console.log('📄 [文档加载] 开始加载文档结构和chunks');
+        const chunks = await loadDocumentStructure();
+        if (chunks && chunks.length > 0) {
+          contentChunks.current = chunks;
+          setChunksLoaded(true); // 设置chunks加载完成标志
+          console.log('📄 [文档加载] 成功设置chunks到contentChunks.current，数量:', chunks.length);
+        } else {
+          console.log('📄 [文档加载] 没有获取到chunks数据');
+        }
+      };
+      
+      loadChunks();
+    }
+  }, [document, documentId, loadDocumentStructure, chunksLoaded]);
+
+  // 在文档、chunks和思维导图都加载完成后，创建动态映射
+  useEffect(() => {
+    if (!documentId.startsWith('demo-') && document && document.content && chunksLoaded) {
+      const mermaidCode = document.mermaid_code_demo;
+      const nodeMapping = document.node_mappings_demo;
+      
+      if (mermaidCode && contentChunks.current.length > 0) {
+        console.log('🔗 [主组件] 准备创建动态映射，chunks数量:', contentChunks.current.length);
+        console.log('🔗 [主组件] 节点映射数据:', nodeMapping);
+        updateDynamicMapping(contentChunks.current, mermaidCode, nodeMapping);
+      } else if (!mermaidCode) {
+        console.log('🔗 [主组件] 等待思维导图生成完成...');
+      }
+    }
+  }, [document, chunksLoaded, updateDynamicMapping, documentId]);
 
   // 加载状态
   if (loading) {
@@ -284,6 +323,43 @@ const ViewerPageRefactored = () => {
               </div>
               <div className="flex items-center space-x-2">
                 <ThemeToggle className="scale-75" />
+                {/* 调试按钮 - 只在非示例模式下显示 */}
+                {!documentId.startsWith('demo-') && (
+                  <button
+                    onClick={() => {
+                      console.log('=== 调试信息 ===');
+                      console.log('文档ID:', documentId);
+                      console.log('当前活跃章节ID:', activeChunkId);
+                      console.log('当前活跃段落ID:', activeContentBlockId);
+                      console.log('chunks数量:', contentChunks.current?.length || 0);
+                      console.log('chunks列表:', contentChunks.current?.map(c => c.chunk_id) || []);
+                      console.log('动态映射:', dynamicMapping);
+                      console.log('思维导图代码长度:', document?.mermaid_code_demo?.length || 0);
+                      console.log('节点映射:', document?.node_mappings_demo);
+                      console.log('原始内容长度:', document?.content?.length || 0);
+                      console.log('带段落ID内容长度:', document?.content_with_ids?.length || 0);
+                      console.log('带段落ID内容前100字符:', document?.content_with_ids?.substring(0, 100) || '无');
+                      
+                      // 检查页面中的段落元素
+                      const allParagraphs = document.querySelectorAll('[id^="para-"], [data-para-id]');
+                      console.log('页面中的段落数量:', allParagraphs.length);
+                      console.log('段落ID列表:', Array.from(allParagraphs).map(el => el.id || el.getAttribute('data-para-id')));
+                      
+                      // 显示localStorage中的调试数据
+                      const debugData = {
+                        textToNodeMap: JSON.parse(localStorage.getItem('debug_semanticTextToNodeMap') || '{}'),
+                        nodeToTextMap: JSON.parse(localStorage.getItem('debug_semanticNodeToTextMap') || '{}'),
+                        aiNodeMapping: JSON.parse(localStorage.getItem('debug_aiNodeMapping') || '{}')
+                      };
+                      console.log('localStorage调试数据:', debugData);
+                      
+                      alert(`调试信息已输出到控制台\n当前活跃章节: ${activeChunkId || '无'}\n当前活跃段落: ${activeContentBlockId || '无'}\n段落数量: ${allParagraphs.length}`);
+                    }}
+                    className="inline-flex items-center px-2 py-1 text-xs bg-purple-600 dark:bg-purple-500 text-white rounded hover:bg-purple-700 dark:hover:bg-purple-600 transition-colors"
+                  >
+                    🐛 调试
+                  </button>
+                )}
                 <button
                   onClick={handleDownloadMarkdown}
                   className="inline-flex items-center px-2 py-1 text-xs bg-green-600 dark:bg-green-500 text-white rounded hover:bg-green-700 dark:hover:bg-green-600 transition-colors"
@@ -296,22 +372,58 @@ const ViewerPageRefactored = () => {
             <ViewModeToggle />
           </div>
           <div className={`flex-1 ${viewMode === 'pdf' && isPdfFile ? 'overflow-hidden' : 'overflow-y-auto p-4'}`}>
-            {viewMode === 'pdf' && isPdfFile ? (
-              <PDFViewer pdfBase64={document.pdf_base64} />
-            ) : (
-              documentId.startsWith('demo-') && currentMindmapMode === 'demo' ? (
+            {(() => {
+              // PDF文件模式
+              if (viewMode === 'pdf' && isPdfFile) {
+                return <PDFViewer pdfBase64={document.pdf_base64} />;
+              }
+              
+              // 纯示例模式（demo-开头且没有真实内容）
+              if (documentId.startsWith('demo-') && !document.content) {
+                console.log('📄 [渲染判断] 纯示例模式');
+                return (
+                  <DemoModeRenderer 
+                    content={null}
+                    onContentBlockRef={handleContentBlockRef}
+                  />
+                );
+              }
+              
+              // 上传文件模式 - 等待chunks加载
+              if (!documentId.startsWith('demo-') && !chunksLoaded) {
+                console.log('📄 [渲染判断] 上传文件模式 - 等待chunks加载');
+                return (
+                  <div className="flex items-center justify-center h-full">
+                    <div className="text-center">
+                      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto mb-2"></div>
+                      <p className="text-sm text-gray-500 dark:text-gray-400">正在加载文档结构...</p>
+                    </div>
+                  </div>
+                );
+              }
+              
+              // 上传文件模式 - chunks已加载 或 带内容的示例模式
+              console.log('📄 [渲染判断] 渲染真实文档内容', {
+                documentId, 
+                chunksLoaded, 
+                chunksCount: contentChunks.current.length,
+                hasContent: !!document.content,
+                hasContentWithIds: !!document.content_with_ids
+              });
+              
+              // 优先使用带段落ID的内容，如果不存在则使用原始内容
+              const contentToRender = document.content_with_ids || document.content;
+              console.log('📄 [内容选择] 使用内容类型:', document.content_with_ids ? '带段落ID的内容' : '原始内容');
+              
+              return (
                 <DemoModeRenderer 
-                  content={document.content}
+                  content={contentToRender}
                   onContentBlockRef={handleContentBlockRef}
-                />
-              ) : (
-                <StructuredMarkdownRenderer 
-                  content={document.content}
+                  isRealDocument={!documentId.startsWith('demo-')}
                   chunks={contentChunks.current}
-                  onSectionRef={handleSectionRef}
                 />
-              )
-            )}
+              );
+            })()}
           </div>
         </div>
 
@@ -325,111 +437,42 @@ const ViewerPageRefactored = () => {
           </div>
         </div>
 
-        {/* 右侧思维导图和AI助手 */}
+        {/* 右侧论证结构流程图 */}
         <div 
           className="bg-white dark:bg-gray-800 overflow-hidden flex flex-col"
           style={{ width: `${100 - (showToc ? tocPanelWidth : 0) - leftPanelWidth}%` }}
         >
-          {/* 思维导图区域 */}
-          <div className={`${readingQuestionsStatus === 'disabled' ? 'h-full' : 'h-3/5'} flex flex-col ${readingQuestionsStatus === 'disabled' ? '' : 'border-b border-gray-200 dark:border-gray-700'}`}>
+          {/* 论证结构流程图区域 */}
+          <div className="h-full flex flex-col">
             <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-700 flex-shrink-0">
               <div className="flex items-center justify-between">
-                <h2 className="text-base font-semibold text-gray-900 dark:text-white">思维导图</h2>
+                <h2 className="text-base font-semibold text-gray-900 dark:text-white">论证结构流程图</h2>
                 <div className="flex items-center space-x-2">
                   <MindmapStatusDisplay />
-                  <div className="flex items-center space-x-1">
-                    {document.mermaid_code && (
-                      <button
-                        onClick={() => handleDownloadMermaid('standard')}
-                        className="inline-flex items-center px-2 py-1 text-xs bg-blue-600 dark:bg-blue-500 text-white rounded hover:bg-blue-700 dark:hover:bg-blue-600 transition-colors"
-                      >
-                        <Download className="w-3 h-3 mr-1" />
-                        详细
-                      </button>
-                    )}
-                    {document.mermaid_code_simple && (
-                      <button
-                        onClick={() => handleDownloadMermaid('simple')}
-                        className="inline-flex items-center px-2 py-1 text-xs bg-purple-600 dark:bg-purple-500 text-white rounded hover:bg-purple-700 dark:hover:bg-purple-600 transition-colors"
-                      >
-                        <Download className="w-3 h-3 mr-1" />
-                        快速
-                      </button>
-                    )}
-                    {document.mermaid_code_demo && (
-                      <button
-                        onClick={() => handleDownloadMermaid('demo')}
-                        className="inline-flex items-center px-2 py-1 text-xs bg-orange-600 dark:bg-orange-500 text-white rounded hover:bg-orange-700 dark:hover:bg-orange-600 transition-colors"
-                      >
-                        <Download className="w-3 h-3 mr-1" />
-                        完整
-                      </button>
-                    )}
-                  </div>
+                  {document.mermaid_code_demo && (
+                    <button
+                      onClick={() => handleDownloadMermaid('demo')}
+                      className="inline-flex items-center px-2 py-1 text-xs bg-blue-600 dark:bg-blue-500 text-white rounded hover:bg-blue-700 dark:hover:bg-blue-600 transition-colors"
+                    >
+                      <Download className="w-3 h-3 mr-1" />
+                      下载流程图
+                    </button>
+                  )}
                 </div>
               </div>
               <div className="flex items-center justify-between mt-2">
                 <div className="flex items-center space-x-1 text-xs text-gray-500 dark:text-gray-400">
-                  <span>
-                    {currentMindmapMode === 'simple' ? '快速模式' : 
-                     currentMindmapMode === 'demo' ? '完整模式' : '详细模式'}
-                  </span>
+                  <span>分析文档的核心论证结构和逻辑流向</span>
                 </div>
-                {(document.mermaid_code || document.mermaid_code_simple || document.mermaid_code_demo) && (
-                  <div className="flex space-x-1">
-                    {document.mermaid_code && (
-                      <button
-                        onClick={() => setCurrentMindmapMode('standard')}
-                        className={`px-2 py-1 text-xs rounded transition-colors ${
-                          currentMindmapMode === 'standard'
-                            ? 'bg-blue-100 dark:bg-blue-900/50 text-blue-700 dark:text-blue-300 border border-blue-300 dark:border-blue-600'
-                            : 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-600'
-                        }`}
-                      >
-                        详细版本
-                      </button>
-                    )}
-                    {document.mermaid_code_simple && (
-                      <button
-                        onClick={() => setCurrentMindmapMode('simple')}
-                        className={`px-2 py-1 text-xs rounded transition-colors ${
-                          currentMindmapMode === 'simple'
-                            ? 'bg-green-100 dark:bg-green-900/50 text-green-700 dark:text-green-300 border border-green-300 dark:border-green-600'
-                            : 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-600'
-                        }`}
-                      >
-                        快速版本
-                      </button>
-                    )}
-                    {document.mermaid_code_demo && (
-                      <button
-                        onClick={() => setCurrentMindmapMode('demo')}
-                        className={`px-2 py-1 text-xs rounded transition-colors ${
-                          currentMindmapMode === 'demo'
-                            ? 'bg-orange-100 dark:bg-orange-900/50 text-orange-700 dark:text-orange-300 border border-orange-300 dark:border-orange-600'
-                            : 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-600'
-                        }`}
-                      >
-                        标准版本
-                      </button>
-                    )}
-                  </div>
-                )}
               </div>
             </div>
             <div className="flex-1 overflow-hidden">
-              {/* 思维导图内容区域 */}
-              {((currentMindmapMode === 'standard' && mindmapStatus === 'completed' && document.mermaid_code) ||
-                (currentMindmapMode === 'simple' && simpleMindmapStatus === 'completed' && document.mermaid_code_simple) ||
-                (currentMindmapMode === 'demo' && demoMindmapStatus === 'completed' && document.mermaid_code_demo)) ? (
+              {/* 流程图内容区域 */}
+              {(demoMindmapStatus === 'completed' && document.mermaid_code_demo) ? (
                 <div className="h-full overflow-hidden">
                   <MermaidDiagram 
                     ref={mermaidDiagramRef}
-                    code={
-                      currentMindmapMode === 'simple' ? document.mermaid_code_simple :
-                      currentMindmapMode === 'demo' ? document.mermaid_code_demo :
-                      document.mermaid_code
-                    }
+                    code={document.mermaid_code_demo}
                     onNodeClick={handleNodeClick}
                   />
                 </div>
@@ -437,86 +480,35 @@ const ViewerPageRefactored = () => {
                 <div className="flex items-center justify-center h-full">
                   <div className="text-center max-w-md px-4">
                     <div className="bg-gray-50 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg p-4">
-                      <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-3">开始生成思维导图</h3>
+                      <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-3">生成论证结构流程图</h3>
                       
-                      <div className="grid grid-cols-3 gap-2 mb-3">
-                        <button
-                          onClick={() => startMindmapGeneration('simple')}
-                          className="flex items-center justify-center px-3 py-2 bg-green-600 dark:bg-green-500 text-white rounded hover:bg-green-700 dark:hover:bg-green-600 transition-colors"
-                          disabled={simpleMindmapStatus === 'generating'}
-                        >
-                          <Zap className="w-3 h-3 mr-1" />
-                          <div className="text-left">
-                            <div className="text-xs font-medium">快速</div>
-                          </div>
-                        </button>
-                        
-                        <button
-                          onClick={() => startMindmapGeneration('standard')}
-                          className="flex items-center justify-center px-3 py-2 bg-blue-600 dark:bg-blue-500 text-white rounded hover:bg-blue-700 dark:hover:bg-blue-600 transition-colors"
-                          disabled={mindmapStatus === 'generating'}
-                        >
-                          <BarChart3 className="w-3 h-3 mr-1" />
-                          <div className="text-left">
-                            <div className="text-xs font-medium">详细</div>
-                          </div>
-                        </button>
-
-                        <button
-                          onClick={() => startMindmapGeneration('demo')}
-                          className="flex items-center justify-center px-3 py-2 bg-orange-600 dark:bg-orange-500 text-white rounded hover:bg-orange-700 dark:hover:bg-orange-600 transition-colors"
-                          disabled={demoMindmapStatus === 'generating'}
-                        >
-                          <Eye className="w-3 h-3 mr-1" />
-                          <div className="text-left">
-                            <div className="text-xs font-medium">完整</div>
-                          </div>
-                        </button>
-                      </div>
+                      <button
+                        onClick={() => startMindmapGeneration('demo')}
+                        className="flex items-center justify-center px-4 py-3 bg-blue-600 dark:bg-blue-500 text-white rounded-lg hover:bg-blue-700 dark:hover:bg-blue-600 transition-colors w-full"
+                        disabled={demoMindmapStatus === 'generating'}
+                      >
+                        {demoMindmapStatus === 'generating' ? (
+                          <>
+                            <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
+                            <span>分析中...</span>
+                          </>
+                        ) : (
+                          <>
+                            <Eye className="w-4 h-4 mr-2" />
+                            <span>开始分析</span>
+                          </>
+                        )}
+                      </button>
+                      
+                      <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">
+                        将分析文档的核心论点和论证逻辑
+                      </p>
                     </div>
                   </div>
                 </div>
               )}
             </div>
           </div>
-
-          {/* AI阅读助手区域 */}
-          {readingQuestionsStatus !== 'disabled' && (
-            <div className="h-2/5 flex flex-col bg-gray-50 dark:bg-gray-800">
-              <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-600 bg-gray-100 dark:bg-gray-700 flex-shrink-0">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center space-x-2">
-                    <Bot className="w-4 h-4 text-blue-600 dark:text-blue-400" />
-                    <h3 className="text-sm font-semibold text-gray-900 dark:text-white">AI阅读助手</h3>
-                    <span className="text-xs text-gray-500 dark:text-gray-400">
-                      ({readingQuestions.length} 个问题)
-                    </span>
-                  </div>
-                  <div className="flex items-center space-x-2">
-                    <button
-                      onClick={() => setShowReadingAssistant(!showReadingAssistant)}
-                      className="inline-flex items-center px-2 py-1 text-xs bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-300 rounded hover:bg-gray-300 dark:hover:bg-gray-500 transition-colors"
-                    >
-                      {showReadingAssistant ? <EyeOff className="w-3 h-3 mr-1" /> : <Eye className="w-3 h-3 mr-1" />}
-                      {showReadingAssistant ? '隐藏' : '显示'}
-                    </button>
-                  </div>
-                </div>
-              </div>
-              
-              {showReadingAssistant && (
-                <div className="flex-1 overflow-hidden">
-                  <ReadingAssistantUI 
-                    questions={readingQuestions}
-                    currentQuestions={currentQuestions}
-                    questionHistory={questionHistory}
-                    status={readingQuestionsStatus}
-                    onRetry={generateReadingQuestions}
-                  />
-                </div>
-              )}
-            </div>
-          )}
         </div>
       </div>
     </div>

@@ -5,11 +5,13 @@ import asyncio
 import os
 import hashlib
 import tempfile
+import re
 from datetime import datetime
 from pathlib import Path
 import logging
 import base64
 from typing import List, Dict, Any
+import json
 
 # 导入现有的思维导图生成器
 from mindmap_generator import MindMapGenerator, MinimalDatabaseStub, get_logger, generate_mermaid_html, DocumentOptimizer
@@ -23,7 +25,7 @@ from magic_pdf.data.dataset import PymuDocDataset
 from magic_pdf.model.doc_analyze_by_custom_model import doc_analyze
 from magic_pdf.config.enums import SupportedPdfParseMethod
 
-app = FastAPI(title="Mindmap Generator API", version="1.0.0")
+app = FastAPI(title="Argument Structure Analyzer API", version="1.0.0")
 
 # 配置CORS
 app.add_middleware(
@@ -48,20 +50,42 @@ PDF_OUTPUT_DIR.mkdir(exist_ok=True)
 # 存储文档状态的内存数据库
 document_status = {}
 
-# 存储AI辅助阅读问题的内存数据库
+# 存储AI辅助阅读问题的内存数据库（保留但禁用使用）
 reading_questions = {}
 
 # 存储文档结构的内存数据库
 document_structures = {}
 
-class ReadingAssistant:
-    """AI辅助阅读助手"""
+class ArgumentStructureAnalyzer:
+    """论证结构分析器"""
     
     def __init__(self):
         self.generator = MindMapGenerator()
         self.document_parser = DocumentParser()
         # 添加DocumentOptimizer实例用于AI调用
         self.optimizer = DocumentOptimizer()
+    
+    def add_paragraph_ids(self, text: str) -> str:
+        """为文本的每个段落添加ID号"""
+        try:
+            # 按段落分割文本
+            paragraphs = text.split('\n\n')
+            processed_paragraphs = []
+            
+            for i, paragraph in enumerate(paragraphs):
+                if paragraph.strip():  # 只处理非空段落
+                    # 为每个段落添加ID标记
+                    para_id = f"para-{i+1}"
+                    processed_paragraph = f"[{para_id}] {paragraph.strip()}"
+                    processed_paragraphs.append(processed_paragraph)
+                else:
+                    processed_paragraphs.append(paragraph)
+            
+            return '\n\n'.join(processed_paragraphs)
+            
+        except Exception as e:
+            print(f"❌ [段落ID添加错误] {str(e)}")
+            return text
     
     def split_text_into_chunks(self, text: str, document_id: str) -> List[Dict[str, Any]]:
         """将文档按Markdown标题层级分块并分配唯一标识符"""
@@ -89,123 +113,301 @@ class ReadingAssistant:
             print(f"❌ [分块错误] {str(e)}")
             return []
     
-    async def generate_questions_for_chunk(self, chunk: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """为文本块生成AI问题"""
+    async def generate_argument_structure(self, text_with_ids: str) -> Dict[str, Any]:
+        """使用AI分析文档的论证结构"""
         try:
-            content = chunk['content']
-            if len(content.strip()) < 50:  # 太短的内容不生成问题
-                return []
-            
-            # 构建更智能的prompt，考虑标题层级
-            title = chunk.get('title', '无标题内容')
-            level = chunk.get('level', 0)
-            heading = chunk.get('heading', '')
-            
-            context_info = ""
-            if level > 0:
-                context_info = f"这是一个{level}级标题「{title}」下的内容。"
-            
-            prompt = f"""你是一个AI阅读助手。请根据以下文本内容，生成1-2个读者在阅读到这里时可能会思考的、有启发性的问题。
+            # 构建基于段落的论证结构分析prompt
+            prompt = f"""我希望你扮演一个专业的学术分析师，你的任务是阅读我提供的、已经按段落标记好ID的文本，并基于现有的段落划分来分析其论证结构。
 
-{context_info}
+请按照以下步骤进行分析：
 
-文本内容：
-"{content}"
+第一步：段落角色识别
+- 基于现有的段落划分（[para-X]标记），分析每个段落在论证中的角色
+- 不要重新划分段落，而是基于现有段落来理解论证逻辑
+- 识别每个段落是引言、论点、证据、反驳、结论等哪种类型
 
-请以JSON格式返回，包含问题列表：
-[
-  {{"question": "问题1的内容...", "type": "理解"}},
-  {{"question": "问题2的内容...", "type": "思考"}}
-]
+第二步：构建论证结构流程图
+- 基于段落的论证角色，构建逻辑流程图
+- 将具有相同或相关论证功能的段落组合成逻辑节点
+- 用箭头表示论证的逻辑流向和依赖关系
 
-要求：
-1. 问题应该具有启发性和思考性，能帮助读者更深入理解
-2. 问题类型可以是："理解"、"思考"、"应用"、"分析"、"评价"、"联想"
-3. 问题长度适中，不超过50个字符
-4. 如果内容较简单，可以只生成1个问题
-5. 问题应该与该段落的主题紧密相关
-"""
+你的输出必须是一个单一的、完整的 JSON 对象，不要在 JSON 代码块前后添加任何额外的解释性文字。
+
+这个 JSON 对象必须包含两个顶级键："mermaid_string" 和 "node_mappings"。
+
+mermaid_string:
+- 值为符合 Mermaid.js 语法的流程图（graph TD）
+- 图中的每个节点代表一组相关的段落（基于论证功能）
+- 节点 ID 使用简短的字母或字母数字组合（如：A, B, C1, D2）
+- 节点标签应该简洁概括该组段落的核心论证功能（不超过20字）
+- 使用箭头 --> 表示论证的逻辑流向和依赖关系
+- 可以使用不同的节点形状来区分不同类型的论证功能：
+  - [方括号] 用于主要论点
+  - (圆括号) 用于支撑证据
+  - {{花括号}} 用于逻辑转折或关键判断
+
+node_mappings:
+- 值为 JSON 对象，键为 Mermaid 图中的节点 ID
+- 每个节点对应的值包含：
+  - "text_snippet": 该节点包含段落的核心内容总结（30-80字）
+  - "paragraph_ids": 构成该节点的段落ID数组（如 ["para-2", "para-3"]）
+  - "semantic_role": 该节点在论证中的角色（如 "引言"、"核心论点"、"支撑证据"、"反驳"、"结论" 等）
+
+关键要求：
+1. 所有节点 ID 必须在 mermaid_string 中存在
+2. paragraph_ids 必须严格使用原文的段落标记 [para-X]，不可修改
+3. 原文的每个段落都应该被分配给至少一个节点
+4. 节点的划分应该基于段落的论证功能，相关功能的段落可以组合在一个节点中
+5. 流程图应该清晰展现论证的逻辑推理路径
+6. 保持段落的完整性，不要拆分或重组段落内容
+
+现在，请分析以下带有段落ID的文本：
+
+{text_with_ids}"""
             
             # 使用DocumentOptimizer的generate_completion方法
             response = await self.optimizer.generate_completion(
                 prompt, 
-                max_tokens=500,
-                task="生成阅读辅助问题"
+                max_tokens=2000,
+                task="分析论证结构"
             )
             
             if not response:
-                return []
+                print(f"❌ [API调用失败] 未收到AI响应")
+                return {"success": False, "error": "API调用失败，未收到AI响应"}
+            
+            # 保存API原始响应到文件
+            try:
+                from datetime import datetime
+                import os
+                
+                # 创建api_responses文件夹（如果不存在）
+                api_responses_dir = "api_responses"
+                os.makedirs(api_responses_dir, exist_ok=True)
+                
+                # 生成文件名：时间戳_论证结构分析
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                response_filename = f"{timestamp}_argument_structure_analysis.txt"
+                response_filepath = os.path.join(api_responses_dir, response_filename)
+                
+                # 保存原始响应和相关信息
+                with open(response_filepath, 'w', encoding='utf-8') as f:
+                    f.write("=== API调用信息 ===\n")
+                    f.write(f"时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+                    f.write(f"任务: 论证结构分析\n")
+                    f.write(f"最大tokens: 2000\n")
+                    f.write(f"响应长度: {len(response)} 字符\n")
+                    f.write(f"文本长度: {len(text_with_ids)} 字符\n")
+                    f.write("\n=== 发送的Prompt ===\n")
+                    f.write(prompt)
+                    f.write("\n\n=== AI原始响应 ===\n")
+                    f.write(response)
+                    f.write(f"\n\n=== 响应结束 ===\n")
+                
+                print(f"💾 [API响应保存] 已保存到: {response_filepath}")
+                
+            except Exception as save_error:
+                print(f"⚠️ [响应保存失败] {str(save_error)}")
             
             # 解析JSON响应
             try:
-                questions_data = self.generator._parse_llm_response(response, "array")
-                questions = []
+                # 详细记录原始响应
+                print(f"🔍 [原始AI响应] 长度: {len(response)} 字符")
+                print(f"🔍 [原始响应前200字符]: {response[:200]}")
                 
-                for q_data in questions_data:
-                    if isinstance(q_data, dict) and 'question' in q_data:
-                        question = {
-                            'question': q_data['question'],
-                            'type': q_data.get('type', '思考'),
-                            'chunk_id': chunk['chunk_id'],
-                            'paragraph_index': chunk['paragraph_index'],
-                            'document_id': chunk['document_id'],
-                            'level': chunk.get('level', 0),
-                            'title': chunk.get('title', ''),
-                            'context': title
+                # 更彻底的响应清理
+                clean_response = response.strip()
+                
+                # 移除可能的代码块标记
+                if clean_response.startswith('```json'):
+                    clean_response = clean_response[7:]
+                elif clean_response.startswith('```'):
+                    clean_response = clean_response[3:]
+                    
+                if clean_response.endswith('```'):
+                    clean_response = clean_response[:-3]
+                
+                clean_response = clean_response.strip()
+                
+                # 移除可能的说明文字，只保留JSON部分
+                json_start = clean_response.find('{')
+                json_end = clean_response.rfind('}')
+                
+                if json_start != -1 and json_end != -1 and json_end > json_start:
+                    clean_response = clean_response[json_start:json_end+1]
+                    print(f"🔧 [提取JSON] 提取到JSON部分，长度: {len(clean_response)}")
+                else:
+                    print(f"⚠️ [JSON提取失败] 无法找到有效的JSON结构")
+                
+                print(f"🔍 [清理后响应前200字符]: {clean_response[:200]}")
+                
+                structure_data = json.loads(clean_response)
+                
+                # 验证必要的键
+                if 'mermaid_string' not in structure_data or 'node_mappings' not in structure_data:
+                    print(f"❌ [数据结构错误] 响应键: {list(structure_data.keys())}")
+                    return {"success": False, "error": "AI响应格式不正确：缺少必要的键"}
+                
+                # 验证节点映射的结构
+                node_mappings = structure_data['node_mappings']
+                valid_mappings = {}
+                
+                for node_id, mapping in node_mappings.items():
+                    if isinstance(mapping, dict):
+                        # 确保必要字段存在，如果缺少semantic_role就添加默认值
+                        valid_mapping = {
+                            "text_snippet": mapping.get("text_snippet", "语义块内容"),
+                            "paragraph_ids": mapping.get("paragraph_ids", []),
+                            "semantic_role": mapping.get("semantic_role", "论证要素")
                         }
-                        questions.append(question)
+                        valid_mappings[node_id] = valid_mapping
+                    else:
+                        print(f"⚠️ [映射格式错误] 节点 {node_id} 的映射不是字典格式")
                 
-                print(f"✅ [问题生成] {title} (级别{level}) 生成 {len(questions)} 个问题")
-                return questions
+                structure_data['node_mappings'] = valid_mappings
                 
-            except Exception as parse_error:
-                print(f"❌ [解析错误] {str(parse_error)}")
-                return []
+                print(f"✅ [论证结构分析] 成功生成包含 {len(structure_data['node_mappings'])} 个节点的流程图")
+                return {
+                    "success": True,
+                    "mermaid_code": structure_data['mermaid_string'],
+                    "node_mappings": structure_data['node_mappings']
+                }
+                
+            except json.JSONDecodeError as parse_error:
+                print(f"❌ [JSON解析错误] {str(parse_error)}")
+                print(f"❌ [完整原始响应]: {response}")
+                print(f"❌ [清理后响应]: {clean_response}")
+                return {"success": False, "error": f"JSON解析失败: {str(parse_error)}"}
                 
         except Exception as e:
-            print(f"❌ [问题生成错误] {str(e)}")
-            return []
-    
-    async def generate_all_questions(self, document_id: str, content: str) -> Dict[str, Any]:
-        """为整个文档生成所有问题"""
-        try:
-            print(f"🤖 [AI助手] 开始为文档 {document_id} 生成阅读辅助问题...")
-            
-            # 分块
-            chunks = self.split_text_into_chunks(content, document_id)
-            if not chunks:
-                return {"success": False, "error": "文档分块失败"}
-            
-            # 为每个chunk生成问题（批量处理）
-            all_questions = []
-            for chunk in chunks:
-                questions = await self.generate_questions_for_chunk(chunk)
-                all_questions.extend(questions)
-                
-                # 避免API调用过于频繁
-                await asyncio.sleep(0.5)
-            
-            # 存储问题
-            reading_questions[document_id] = {
-                'questions': all_questions,
-                'chunks': chunks,
-                'total_questions': len(all_questions),
-                'generated_at': datetime.now().isoformat()
-            }
-            
-            print(f"✅ [AI助手] 文档 {document_id} 共生成 {len(all_questions)} 个问题")
-            return {
-                "success": True, 
-                "total_questions": len(all_questions),
-                "questions": all_questions
-            }
-            
-        except Exception as e:
-            print(f"❌ [AI助手错误] {str(e)}")
-            return {"success": False, "error": str(e)}
+            print(f"❌ [论证结构分析错误] {str(e)}")
+            # 提供降级策略 - 生成基本的论证结构
+            try:
+                fallback_structure = self.generate_fallback_structure(text_with_ids)
+                print(f"🔄 [降级策略] 使用基本论证结构，包含 {len(fallback_structure['node_mappings'])} 个节点")
+                return fallback_structure
+            except Exception as fallback_error:
+                print(f"❌ [降级策略失败] {str(fallback_error)}")
+                return {"success": False, "error": f"AI分析失败且降级策略也失败: {str(e)}"}
 
-# 创建阅读助手实例
-reading_assistant = ReadingAssistant()
+    def generate_fallback_structure(self, text_with_ids: str) -> Dict[str, Any]:
+        """生成基本的论证结构作为降级策略"""
+        import re
+        
+        # 提取所有段落ID
+        para_ids = re.findall(r'\[para-(\d+)\]', text_with_ids)
+        
+        if not para_ids:
+            # 如果没有找到段落ID，创建一个基本结构
+            return {
+                "success": True,
+                "mermaid_code": "graph TD\n    A[文档分析] --> B[主要内容]\n    B --> C[总结]",
+                "node_mappings": {
+                    "A": {
+                        "text_snippet": "文档开始",
+                        "paragraph_ids": ["para-1"],
+                        "semantic_role": "引言"
+                    },
+                    "B": {
+                        "text_snippet": "主要内容",
+                        "paragraph_ids": ["para-2"],
+                        "semantic_role": "核心论点"
+                    },
+                    "C": {
+                        "text_snippet": "文档结论",
+                        "paragraph_ids": ["para-3"],
+                        "semantic_role": "结论"
+                    }
+                }
+            }
+        
+        # 基于段落数量生成结构
+        total_paras = len(para_ids)
+        
+        if total_paras <= 3:
+            # 简单线性结构
+            mermaid_code = "graph TD\n"
+            mermaid_code += "    A[引言] --> B[主体]\n"
+            mermaid_code += "    B --> C[结论]"
+            
+            node_mappings = {
+                "A": {
+                    "text_snippet": "文档引言部分",
+                    "paragraph_ids": [f"para-{para_ids[0]}"],
+                    "semantic_role": "引言"
+                },
+                "B": {
+                    "text_snippet": "文档主体内容",
+                    "paragraph_ids": [f"para-{pid}" for pid in para_ids[1:-1]] if total_paras > 2 else [f"para-{para_ids[1]}"] if total_paras > 1 else [],
+                    "semantic_role": "核心论点"
+                },
+                "C": {
+                    "text_snippet": "文档结论",
+                    "paragraph_ids": [f"para-{para_ids[-1]}"] if total_paras > 1 else [],
+                    "semantic_role": "结论"
+                }
+            }
+        else:
+            # 复杂结构：引言 -> 多个论点 -> 结论
+            mermaid_code = "graph TD\n"
+            mermaid_code += "    A[引言] --> B[论点1]\n"
+            mermaid_code += "    A --> C[论点2]\n"
+            if total_paras > 5:
+                mermaid_code += "    A --> D[论点3]\n"
+                mermaid_code += "    B --> E[结论]\n"
+                mermaid_code += "    C --> E\n"
+                mermaid_code += "    D --> E"
+            else:
+                mermaid_code += "    B --> D[结论]\n"
+                mermaid_code += "    C --> D"
+            
+            # 将段落分配给不同节点
+            para_per_section = max(1, total_paras // 4)
+            
+            node_mappings = {
+                "A": {
+                    "text_snippet": "文档引言",
+                    "paragraph_ids": [f"para-{para_ids[0]}"],
+                    "semantic_role": "引言"
+                },
+                "B": {
+                    "text_snippet": "第一个论点",
+                    "paragraph_ids": [f"para-{pid}" for pid in para_ids[1:1+para_per_section]],
+                    "semantic_role": "核心论点"
+                },
+                "C": {
+                    "text_snippet": "第二个论点", 
+                    "paragraph_ids": [f"para-{pid}" for pid in para_ids[1+para_per_section:1+2*para_per_section]],
+                    "semantic_role": "支撑证据"
+                }
+            }
+            
+            if total_paras > 5:
+                node_mappings["D"] = {
+                    "text_snippet": "第三个论点",
+                    "paragraph_ids": [f"para-{pid}" for pid in para_ids[1+2*para_per_section:-1]],
+                    "semantic_role": "补充论证"
+                }
+                node_mappings["E"] = {
+                    "text_snippet": "文档结论",
+                    "paragraph_ids": [f"para-{para_ids[-1]}"],
+                    "semantic_role": "结论"
+                }
+            else:
+                node_mappings["D"] = {
+                    "text_snippet": "文档结论",
+                    "paragraph_ids": [f"para-{pid}" for pid in para_ids[1+2*para_per_section:]],
+                    "semantic_role": "结论"
+                }
+        
+        return {
+            "success": True,
+            "mermaid_code": mermaid_code,
+            "node_mappings": node_mappings
+        }
+
+# 创建全局分析器实例
+argument_analyzer = ArgumentStructureAnalyzer()
 
 async def process_pdf_to_markdown(pdf_file_path: str, document_id: str) -> str:
     """
@@ -355,6 +557,11 @@ async def upload_document(file: UploadFile = File(...)):
         # 存储到内存数据库
         MinimalDatabaseStub.store_text(text_content)
         
+        # 立即为文档内容添加段落ID，无需等待生成论证结构
+        print("📝 [处理段落] 为上传的文档添加段落ID标记...")
+        content_with_ids = argument_analyzer.add_paragraph_ids(text_content)
+        print(f"📝 [段落处理完成] 已为文档添加段落ID，内容长度: {len(content_with_ids)} 字符")
+        
         # 初始化文档状态
         document_status[document_id] = {
             "status": "uploaded",
@@ -363,8 +570,11 @@ async def upload_document(file: UploadFile = File(...)):
             "file_type": file_extension,
             "original_file_path": str(original_file_path),
             "pdf_base64": pdf_base64,  # 仅PDF文件有此字段
-            "mermaid_code": None,
-            "error": None
+            "status_demo": "not_started",
+            "mermaid_code_demo": None,
+            "node_mappings_demo": {},
+            "error_demo": None,
+            "content_with_ids": content_with_ids  # 立即设置带段落ID的内容
         }
         
         print(f"✅ [上传成功] 文档已保存并准备生成思维导图")
@@ -420,124 +630,100 @@ async def get_document_pdf(document_id: str):
         filename=doc_info["filename"]
     )
 
-@app.post("/api/generate-mindmap/{document_id}")
-async def generate_mindmap(document_id: str, method: str = "standard"):
-    """为指定文档生成思维导图
-    
-    Args:
-        document_id: 文档ID
-        method: 生成方法，"standard"(标准详细模式) 或 "simple"(快速简化模式)
-    """
+@app.post("/api/generate-argument-structure/{document_id}")
+async def generate_argument_structure(document_id: str):
+    """为指定文档生成论证结构流程图"""
     
     if document_id not in document_status:
         raise HTTPException(status_code=404, detail="文档不存在")
     
     doc_info = document_status[document_id]
     
-    # 根据方法类型检查状态
-    status_key = f"status_{method}" if method == "simple" else "status"
-    code_key = f"mermaid_code_{method}" if method == "simple" else "mermaid_code"
-    
-    if doc_info.get(status_key) == "generating":
-        print(f"⏳ [状态查询] 文档 {document_id} 思维导图正在生成中... (方法: {method})")
+    # 检查状态
+    if doc_info.get("status_demo") == "generating":
+        print(f"⏳ [状态查询] 文档 {document_id} 论证结构正在分析中...")
         return JSONResponse({
             "success": True,
             "status": "generating",
-            "method": method,
-            "message": f"思维导图正在生成中... ({method}模式)"
+            "message": "论证结构正在分析中..."
         })
     
-    if doc_info.get(status_key) == "completed" and doc_info.get(code_key):
-        print(f"✅ [状态查询] 文档 {document_id} 思维导图已生成完成 (方法: {method})")
+    if doc_info.get("status_demo") == "completed" and doc_info.get("mermaid_code_demo"):
+        print(f"✅ [状态查询] 文档 {document_id} 论证结构已分析完成")
         return JSONResponse({
             "success": True,
             "status": "completed",
-            "method": method,
-            "mermaid_code": doc_info[code_key],
-            "message": f"思维导图已生成 ({method}模式)"
+            "mermaid_code": doc_info["mermaid_code_demo"],
+            "node_mappings": doc_info.get("node_mappings_demo", {}),
+            "message": "论证结构已生成"
         })
     
     try:
-        print(f"🔄 [开始生成] 为文档 {document_id} 启动思维导图生成任务 (方法: {method})")
+        print(f"🔄 [开始分析] 为文档 {document_id} 启动论证结构分析任务")
         
-        # 更新状态为生成中
-        doc_info[status_key] = "generating"
+        # 更新状态为分析中
+        doc_info["status_demo"] = "generating"
         
-        # 异步生成思维导图
-        asyncio.create_task(generate_mindmap_async(document_id, doc_info["content"], method))
+        # 异步生成论证结构
+        asyncio.create_task(generate_argument_structure_async(document_id, doc_info["content"]))
         
         return JSONResponse({
             "success": True,
             "status": "generating",
-            "method": method,
-            "message": f"开始生成思维导图... ({method}模式)"
+            "message": "开始分析论证结构..."
         })
         
     except Exception as e:
-        print(f"❌ [启动失败] 文档 {document_id} 思维导图生成启动失败: {str(e)} (方法: {method})")
-        logger.error(f"生成思维导图时出错: {str(e)}")
-        doc_info[status_key] = "error"
-        doc_info[f"error_{method}"] = str(e)
-        raise HTTPException(status_code=500, detail=f"生成思维导图时出错: {str(e)}")
+        print(f"❌ [启动失败] 文档 {document_id} 论证结构分析启动失败: {str(e)}")
+        logger.error(f"生成论证结构时出错: {str(e)}")
+        doc_info["status_demo"] = "error"
+        doc_info["error_demo"] = str(e)
+        raise HTTPException(status_code=500, detail=f"生成论证结构时出错: {str(e)}")
 
-@app.post("/api/generate-mindmap-simple/{document_id}")
-async def generate_mindmap_simple(document_id: str):
-    """为指定文档快速生成思维导图（简化版本）"""
-    return await generate_mindmap(document_id, method="simple")
-
-async def generate_mindmap_async(document_id: str, content: str, method: str = "standard"):
-    """异步生成思维导图
-    
-    Args:
-        document_id: 文档ID
-        content: 文档内容
-        method: 生成方法，"standard" 或 "simple"
-    """
+async def generate_argument_structure_async(document_id: str, content: str):
+    """异步生成论证结构流程图"""
     try:
-        method_name = "简化快速" if method == "simple" else "标准详细"
-        print(f"\n🚀 [开始生成] 文档ID: {document_id} (方法: {method_name})")
+        print(f"\n🚀 [开始分析] 文档ID: {document_id}")
         print(f"📄 [文档内容] 长度: {len(content)} 字符")
         print("=" * 60)
         
-        logger.info(f"Starting {method} mindmap generation for document: {document_id}")
-        generator = MindMapGenerator()
+        # 获取已经处理过的带段落ID的内容
+        print("📝 [获取段落ID] 使用已处理的段落ID内容...")
+        text_with_ids = document_status[document_id]["content_with_ids"]
+        if not text_with_ids:
+            # 如果没有预处理的内容，重新生成（向后兼容）
+            print("📝 [重新处理] 未找到预处理的段落ID内容，重新生成...")
+            text_with_ids = argument_analyzer.add_paragraph_ids(content)
+            document_status[document_id]["content_with_ids"] = text_with_ids
         
-        print(f"🤖 [AI处理] 正在调用思维导图生成器... (方法: {method_name})")
+        # 分析论证结构
+        print("🧠 [AI分析] 开始分析论证结构...")
+        result = await argument_analyzer.generate_argument_structure(text_with_ids)
         
-        # 根据方法选择不同的生成函数
-        if method == "simple":
-            mermaid_syntax = await generator.generate_mindmap_simple(content, request_id=document_id)
+        if result["success"]:
+            # 更新文档状态
+            document_status[document_id]["status_demo"] = "completed"
+            document_status[document_id]["mermaid_code_demo"] = result["mermaid_code"]
+            document_status[document_id]["node_mappings_demo"] = result["node_mappings"]
+            document_status[document_id]["content_with_ids"] = text_with_ids  # 保存带ID的内容
+            
+            print(f"✅ [分析完成] 文档 {document_id} 论证结构分析成功")
+            print(f"📊 [生成结果] 包含 {len(result['node_mappings'])} 个论证节点")
         else:
-            mermaid_syntax = await generator.generate_mindmap(content, request_id=document_id)
-        
-        # 更新文档状态
-        status_key = f"status_{method}" if method == "simple" else "status"
-        code_key = f"mermaid_code_{method}" if method == "simple" else "mermaid_code"
-        
-        document_status[document_id][status_key] = "completed"
-        document_status[document_id][code_key] = mermaid_syntax
-        
-        print(f"✅ [生成完成] 文档ID: {document_id} (方法: {method_name})")
-        print(f"🎯 [思维导图] 代码长度: {len(mermaid_syntax)} 字符")
-        print("=" * 60)
-        
-        logger.info(f"{method.capitalize()} mindmap generation completed for document: {document_id}")
-        
+            # 分析失败
+            document_status[document_id]["status_demo"] = "error"
+            document_status[document_id]["error_demo"] = result["error"]
+            print(f"❌ [分析失败] 文档 {document_id}: {result['error']}")
+            
     except Exception as e:
-        method_name = "简化快速" if method == "simple" else "标准详细"
-        print(f"❌ [生成失败] 文档ID: {document_id}, 错误: {str(e)} (方法: {method_name})")
-        print("=" * 60)
-        logger.error(f"异步生成思维导图失败: {str(e)}")
-        
-        status_key = f"status_{method}" if method == "simple" else "status"
-        error_key = f"error_{method}" if method == "simple" else "error"
-        
-        document_status[document_id][status_key] = "error"
-        document_status[document_id][error_key] = str(e)
+        print(f"❌ [异步分析错误] 文档 {document_id}: {str(e)}")
+        logger.error(f"异步生成论证结构时出错: {str(e)}")
+        document_status[document_id]["status_demo"] = "error"
+        document_status[document_id]["error_demo"] = str(e)
 
 @app.get("/api/document-status/{document_id}")
 async def get_document_status(document_id: str):
-    """获取文档状态和思维导图生成进度"""
+    """获取文档状态和论证结构分析进度"""
     
     if document_id not in document_status:
         raise HTTPException(status_code=404, detail="文档不存在")
@@ -547,19 +733,16 @@ async def get_document_status(document_id: str):
     response_data = {
         "success": True,
         "document_id": document_id,
-        "status": doc_info.get("status", "not_started"),  # 标准模式状态
-        "status_simple": doc_info.get("status_simple", "not_started"),  # 简化模式状态
         "filename": doc_info.get("filename"),
         "content": doc_info.get("content"),
-        "file_type": doc_info.get("file_type", ".md"),  # 文件类型
-        "mermaid_code": doc_info.get("mermaid_code"),  # 标准模式代码
-        "mermaid_code_simple": doc_info.get("mermaid_code_simple"),  # 简化模式代码
-        "error": doc_info.get("error"),  # 标准模式错误
-        "error_simple": doc_info.get("error_simple"),  # 简化模式错误
-        # 添加阅读问题相关状态
-        "reading_questions_status": doc_info.get("reading_questions_status", "not_started"),
-        "has_reading_questions": document_id in reading_questions,
-        "reading_questions_count": reading_questions.get(document_id, {}).get("total_questions", 0)
+        "file_type": doc_info.get("file_type", ".md"),
+        
+        # 论证结构分析状态
+        "status_demo": doc_info.get("status_demo", "not_started"),
+        "mermaid_code_demo": doc_info.get("mermaid_code_demo"),
+        "node_mappings_demo": doc_info.get("node_mappings_demo", {}),
+        "error_demo": doc_info.get("error_demo"),
+        "content_with_ids": doc_info.get("content_with_ids"),
     }
     
     # 如果是PDF文件，添加PDF相关信息
@@ -571,45 +754,48 @@ async def get_document_status(document_id: str):
 
 @app.get("/api/document/{document_id}")
 async def get_document(document_id: str):
-    """获取文档内容和思维导图（兼容旧API）"""
+    """获取文档内容和论证结构"""
     
     try:
-        # 查找文件
-        file_path = UPLOAD_DIR / f"{document_id}.md"
-        
-        if not file_path.exists():
-            # 如果文件不存在，尝试从内存状态获取
-            if document_id in document_status:
-                doc_info = document_status[document_id]
-                return JSONResponse({
-                    "success": True,
-                    "document_id": document_id,
-                    "content": doc_info["content"],
-                    "mermaid_code": doc_info.get("mermaid_code"),
-                    "status": doc_info["status"]
-                })
-            else:
-                raise HTTPException(status_code=404, detail="文档不存在")
-        
-        # 读取文件内容
-        with open(file_path, 'r', encoding='utf-8') as f:
-            content = f.read()
-        
-        # 检查是否已有思维导图
-        if document_id in document_status and document_status[document_id].get("mermaid_code"):
-            mermaid_syntax = document_status[document_id]["mermaid_code"]
+        # 如果文件在内存状态中存在，直接返回
+        if document_id in document_status:
+            doc_info = document_status[document_id]
+            return JSONResponse({
+                "success": True,
+                "document_id": document_id,
+                "content": doc_info["content"],
+                "filename": doc_info.get("filename", ""),
+                "file_type": doc_info.get("file_type", ".md"),
+                "mermaid_code_demo": doc_info.get("mermaid_code_demo"),
+                "node_mappings_demo": doc_info.get("node_mappings_demo", {}),
+                "status_demo": doc_info.get("status_demo", "not_started"),
+                "error_demo": doc_info.get("error_demo"),
+                "content_with_ids": doc_info.get("content_with_ids"),
+                "pdf_base64": doc_info.get("pdf_base64")
+            })
         else:
-            # 重新生成思维导图（如果需要）
-            MinimalDatabaseStub.store_text(content)
-            generator = MindMapGenerator()
-            mermaid_syntax = await generator.generate_mindmap(content, request_id=document_id)
-        
-        return JSONResponse({
-            "success": True,
-            "document_id": document_id,
-            "content": content,
-            "mermaid_code": mermaid_syntax
-        })
+            # 尝试查找文件
+            file_path = UPLOAD_DIR / f"{document_id}.md"
+            
+            if not file_path.exists():
+                raise HTTPException(status_code=404, detail="文档不存在")
+            
+            # 读取文件内容
+            with open(file_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+            
+            return JSONResponse({
+                "success": True,
+                "document_id": document_id,
+                "content": content,
+                "filename": f"{document_id}.md",
+                "file_type": ".md",
+                "mermaid_code_demo": None,
+                "node_mappings_demo": {},
+                "status_demo": "not_started",
+                "error_demo": None,
+                "content_with_ids": None
+            })
         
     except Exception as e:
         logger.error(f"获取文档时出错: {str(e)}")
@@ -618,122 +804,13 @@ async def get_document(document_id: str):
 @app.get("/api/health")
 async def health_check():
     """健康检查接口"""
-    return {"status": "healthy", "message": "Mindmap Generator API is running"}
+    return {"status": "healthy", "message": "Argument Structure Analyzer API is running"}
 
 @app.get("/")
 async def root():
-    return {"message": "Mindmap Generator API is running"}
+    return {"message": "Argument Structure Analyzer API is running"}
 
-# AI辅助阅读相关API端点
-
-@app.post("/api/generate-reading-questions/{document_id}")
-async def generate_reading_questions(document_id: str):
-    """为文档生成AI辅助阅读问题"""
-    try:
-        if document_id not in document_status:
-            raise HTTPException(status_code=404, detail="文档不存在")
-        
-        document = document_status[document_id]
-        content = document.get('content')
-        
-        if not content:
-            raise HTTPException(status_code=400, detail="文档内容为空")
-        
-        # 检查是否已经有问题
-        if document_id in reading_questions:
-            existing_questions = reading_questions[document_id]
-            return {
-                "success": True,
-                "message": "问题已存在",
-                "total_questions": existing_questions['total_questions'],
-                "questions": existing_questions['questions']
-            }
-        
-        # 生成问题
-        result = await reading_assistant.generate_all_questions(document_id, content)
-        
-        if result['success']:
-            # 更新文档状态
-            document_status[document_id]['reading_questions_status'] = 'completed'
-            return result
-        else:
-            document_status[document_id]['reading_questions_status'] = 'error'
-            raise HTTPException(status_code=500, detail=result.get('error', '生成问题失败'))
-            
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Generate reading questions error: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"生成问题失败: {str(e)}")
-
-@app.get("/api/reading-questions/{document_id}")
-async def get_reading_questions(document_id: str):
-    """获取文档的AI辅助阅读问题"""
-    try:
-        if document_id not in reading_questions:
-            return {
-                "success": False,
-                "message": "尚未生成问题",
-                "questions": []
-            }
-        
-        questions_data = reading_questions[document_id]
-        return {
-            "success": True,
-            "total_questions": questions_data['total_questions'],
-            "questions": questions_data['questions'],
-            "chunks": questions_data['chunks'],
-            "generated_at": questions_data['generated_at']
-        }
-        
-    except Exception as e:
-        logger.error(f"Get reading questions error: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"获取问题失败: {str(e)}")
-
-@app.get("/api/reading-questions/{document_id}/paragraph/{paragraph_index}")
-async def get_questions_by_paragraph(document_id: str, paragraph_index: int):
-    """获取特定段落的问题"""
-    try:
-        if document_id not in reading_questions:
-            return {
-                "success": False,
-                "questions": []
-            }
-        
-        questions_data = reading_questions[document_id]
-        paragraph_questions = [
-            q for q in questions_data['questions'] 
-            if q['paragraph_index'] == paragraph_index
-        ]
-        
-        return {
-            "success": True,
-            "questions": paragraph_questions,
-            "paragraph_index": paragraph_index
-        }
-        
-    except Exception as e:
-        logger.error(f"Get paragraph questions error: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"获取段落问题失败: {str(e)}")
-
-@app.delete("/api/reading-questions/{document_id}")
-async def delete_reading_questions(document_id: str):
-    """删除文档的AI辅助阅读问题"""
-    try:
-        if document_id in reading_questions:
-            del reading_questions[document_id]
-        
-        if document_id in document_status:
-            document_status[document_id]['reading_questions_status'] = 'not_started'
-        
-        return {
-            "success": True,
-            "message": "问题已删除"
-        }
-        
-    except Exception as e:
-        logger.error(f"Delete reading questions error: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"删除问题失败: {str(e)}")
+# 文档结构相关API端点（保留用于目录生成等）
 
 # 文档结构和目录相关API端点
 
@@ -742,19 +819,52 @@ async def get_document_structure(document_id: str):
     """获取文档的层级结构"""
     try:
         if document_id not in document_structures:
+            # 如果结构不存在，尝试从文档内容生成
+            if document_id in document_status:
+                content = document_status[document_id].get('content')
+                if content:
+                    parser = DocumentParser()
+                    root = parser.parse_document(content, document_id)
+                    toc = parser.generate_toc(root)
+                    chunks = parser.parse_to_chunks(content, document_id)
+                    
+                    # 保存结构
+                    document_structures[document_id] = {
+                        'structure': root.to_dict(),
+                        'toc': toc,
+                        'chunks': chunks
+                    }
+                    
+                    print(f"📄 [自动生成] 为文档 {document_id} 生成了结构和 {len(chunks)} 个chunks")
+                    
+                    return {
+                        "success": True,
+                        "structure": root.to_dict(),
+                        "toc": toc,
+                        "chunks": chunks,
+                        "chunks_count": len(chunks)
+                    }
+            
             return {
                 "success": False,
-                "message": "文档结构尚未生成",
+                "message": "文档结构尚未生成，且无法自动生成",
                 "structure": None,
-                "toc": []
+                "toc": [],
+                "chunks": [],
+                "chunks_count": 0
             }
         
         structure_data = document_structures[document_id]
+        chunks = structure_data.get('chunks', [])
+        
+        print(f"📄 [API] 返回文档结构，chunks数量: {len(chunks)}")
+        
         return {
             "success": True,
             "structure": structure_data['structure'],
-            "toc": structure_data['toc'],
-            "chunks_count": len(structure_data['chunks'])
+            "toc": structure_data['toc'], 
+            "chunks": chunks,  # 返回实际的chunks数据
+            "chunks_count": len(chunks)
         }
         
     except Exception as e:

@@ -1,0 +1,8 @@
+# 排除所有API响应文件
+*.txt
+*.json
+*.log
+
+# 但保留这个README文件来说明文件夹的用途
+!README.md
+!.gitignore 

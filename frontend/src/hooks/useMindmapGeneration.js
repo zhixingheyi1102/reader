@@ -6,15 +6,7 @@ import toast from 'react-hot-toast';
 export const useMindmapGeneration = (documentId, document, setDocument) => {
   const location = useLocation();
   
-  const [mindmapStatus, setMindmapStatus] = useState('not_started');
-  const [mindmapError, setMindmapError] = useState(null);
-  const [simpleMindmapStatus, setSimpleMindmapStatus] = useState('not_started');
-  const [simpleMindmapError, setSimpleMindmapError] = useState(null);
   const [demoMindmapStatus, setDemoMindmapStatus] = useState('not_started');
-  
-  // 从上传页面传递的模式选择
-  const selectedMode = location.state?.selectedMode || 'simple';
-  const [currentMindmapMode, setCurrentMindmapMode] = useState(selectedMode);
   const [autoStarted, setAutoStarted] = useState(false);
 
   // 默认演示流程图代码 - 现代化样式
@@ -124,33 +116,27 @@ flowchart TD
   // MindmapStatusDisplay 组件定义
   const MindmapStatusDisplay = () => {
     const getStatusInfo = () => {
-      if (mindmapStatus === 'generating' || simpleMindmapStatus === 'generating' || demoMindmapStatus === 'generating') {
+      if (demoMindmapStatus === 'generating') {
         return { 
-          text: '生成中...', 
+          text: '分析中...', 
           color: 'text-yellow-600',
           bgColor: 'bg-yellow-50',
           borderColor: 'border-yellow-200'
         };
       }
       
-      if (mindmapError || simpleMindmapError) {
+      if (demoMindmapStatus === 'error') {
         return { 
-          text: '生成失败', 
+          text: '分析失败', 
           color: 'text-red-600',
           bgColor: 'bg-red-50',
           borderColor: 'border-red-200'
         };
       }
       
-      const completedCount = [
-        mindmapStatus === 'completed' && document?.mermaid_code,
-        simpleMindmapStatus === 'completed' && document?.mermaid_code_simple,
-        demoMindmapStatus === 'completed' && document?.mermaid_code_demo
-      ].filter(Boolean).length;
-      
-      if (completedCount > 0) {
+      if (demoMindmapStatus === 'completed' && document?.mermaid_code_demo) {
         return { 
-          text: `${completedCount}个版本可用`, 
+          text: '论证结构已生成', 
           color: 'text-green-600',
           bgColor: 'bg-green-50',
           borderColor: 'border-green-200'
@@ -169,7 +155,7 @@ flowchart TD
     
     return (
       <div className={`inline-flex items-center px-2 py-1 text-xs rounded border ${statusInfo.bgColor} ${statusInfo.color} ${statusInfo.borderColor}`}>
-        {(mindmapStatus === 'generating' || simpleMindmapStatus === 'generating' || demoMindmapStatus === 'generating') && (
+        {demoMindmapStatus === 'generating' && (
           <div className="animate-spin rounded-full h-3 w-3 border-b border-current mr-1"></div>
         )}
         {statusInfo.text}
@@ -177,132 +163,87 @@ flowchart TD
     );
   };
 
-  const startMindmapGeneration = async (method = 'standard') => {
+  const startMindmapGeneration = async (method = 'demo') => {
     try {
-      // 如果是演示模式，直接设置演示代码
+      // 如果是演示模式，直接设置演示代码或调用API
       if (method === 'demo') {
         setDemoMindmapStatus('generating');
-        setCurrentMindmapMode('demo');
         
-        // 模拟加载过程
-        setTimeout(() => {
-          setDocument(prev => ({
-            ...prev,
-            mermaid_code_demo: defaultDemoMermaidCode
-          }));
-          setDemoMindmapStatus('completed');
-          toast.success('思维导图加载完成！');
-        }, 1000);
-        
-        toast.success('正在加载思维导图...');
-        return;
-      }
-
-      const setStatus = method === 'simple' ? setSimpleMindmapStatus : setMindmapStatus;
-      const setError = method === 'simple' ? setSimpleMindmapError : setMindmapError;
-      
-      setStatus('generating');
-      setError(null);
-      setCurrentMindmapMode(method);
-      
-      // 获取实际的文档ID（去掉demo-前缀）
-      const actualDocumentId = documentId.startsWith('demo-') 
-        ? documentId.replace('demo-', '') 
-        : documentId;
-      
-      const url = method === 'simple' 
-        ? `http://localhost:8000/api/generate-mindmap-simple/${actualDocumentId}`
-        : `http://localhost:8000/api/generate-mindmap/${actualDocumentId}`;
-      
-      const response = await axios.post(url);
-      
-      if (response.data.success) {
-        const modeText = method === 'simple' ? '快速' : '详细';
-        toast.success(`开始生成${modeText}思维导图...`);
-        
-        if (response.data.status === 'completed' && response.data.mermaid_code) {
-          setStatus('completed');
-          const codeKey = method === 'simple' ? 'mermaid_code_simple' : 'mermaid_code';
-          setDocument(prev => ({
-            ...prev,
-            [codeKey]: response.data.mermaid_code
-          }));
-          toast.success(`${modeText}思维导图生成完成！`);
+        // 如果是真正的demo文档（以demo-开头但是时间戳形式），直接显示示例
+        if (documentId.includes(Date.now().toString().slice(0, 8))) {
+          // 模拟加载过程
+          setTimeout(() => {
+            setDocument(prev => ({
+              ...prev,
+              mermaid_code_demo: defaultDemoMermaidCode
+            }));
+            setDemoMindmapStatus('completed');
+            toast.success('论证结构流程图加载完成！');
+          }, 1000);
+          
+          toast.success('正在加载预设的论证结构示例...');
+          return;
         }
-      } else {
-        throw new Error(response.data.message || '开始生成失败');
+        
+        // 对于上传的文件，调用后端API
+        const response = await axios.post(`http://localhost:8000/api/generate-argument-structure/${documentId}`);
+        
+        if (response.data.success) {
+          toast.success('开始分析文档的论证结构...');
+          
+          if (response.data.status === 'completed' && response.data.mermaid_code) {
+            setDemoMindmapStatus('completed');
+            setDocument(prev => ({
+              ...prev,
+              mermaid_code_demo: response.data.mermaid_code,
+              node_mappings_demo: response.data.node_mappings || {}
+            }));
+            toast.success('论证结构流程图生成完成！');
+          }
+        } else {
+          throw new Error(response.data.message || '开始分析失败');
+        }
       }
     } catch (error) {
-      console.error(`Start ${method} mindmap generation error:`, error);
+      console.error(`Start argument structure generation error:`, error);
       
-      if (method === 'demo') {
-        setDemoMindmapStatus('error');
-        toast.error('加载思维导图失败');
-        return;
-      }
-      
-      const setStatus = method === 'simple' ? setSimpleMindmapStatus : setMindmapStatus;
-      const setError = method === 'simple' ? setSimpleMindmapError : setMindmapError;
-      
-      setStatus('error');
-      setError(error.response?.data?.detail || error.message || '生成思维导图失败');
-      toast.error('生成思维导图失败');
+      setDemoMindmapStatus('error');
+      toast.error('分析论证结构失败');
     }
   };
 
-  // 文档加载完成后自动开始生成思维导图（只运行一次）
+  // 文档加载完成后自动开始生成论证结构（只运行一次）
   useEffect(() => {
-    if (document && !autoStarted) {
+    if (document && !autoStarted && documentId.startsWith('demo-')) {
       setAutoStarted(true);
       setTimeout(() => {
-        startMindmapGeneration(selectedMode);
+        startMindmapGeneration('demo');
       }, 1000);
     }
-  }, [document, autoStarted, selectedMode]);
+  }, [document, autoStarted, documentId]);
 
-  // 轮询检查思维导图生成状态
+  // 轮询检查论证结构生成状态
   useEffect(() => {
     let interval;
-    if (mindmapStatus === 'generating' || simpleMindmapStatus === 'generating') {
+    if (demoMindmapStatus === 'generating' && !documentId.includes(Date.now().toString().slice(0, 8))) {
       interval = setInterval(async () => {
         try {
-          // 获取实际的文档ID（去掉demo-前缀）
-          const actualDocumentId = documentId.startsWith('demo-') 
-            ? documentId.replace('demo-', '') 
-            : documentId;
+          // 对于上传的真实文档，直接使用documentId（已经不带demo-前缀了）
+          const actualDocumentId = documentId;
             
           const response = await axios.get(`http://localhost:8000/api/document-status/${actualDocumentId}`);
           if (response.data.success) {
-            // 检查标准模式
-            if (mindmapStatus === 'generating') {
-              if (response.data.status === 'completed' && response.data.mermaid_code) {
-                setMindmapStatus('completed');
-                setDocument(prev => ({
-                  ...prev,
-                  mermaid_code: response.data.mermaid_code
-                }));
-                toast.success('详细思维导图生成完成！');
-              } else if (response.data.status === 'error') {
-                setMindmapStatus('error');
-                setMindmapError(response.data.error || '生成失败');
-                toast.error('详细思维导图生成失败');
-              }
-            }
-            
-            // 检查简化模式
-            if (simpleMindmapStatus === 'generating') {
-              if (response.data.status_simple === 'completed' && response.data.mermaid_code_simple) {
-                setSimpleMindmapStatus('completed');
-                setDocument(prev => ({
-                  ...prev,
-                  mermaid_code_simple: response.data.mermaid_code_simple
-                }));
-                toast.success('快速思维导图生成完成！');
-              } else if (response.data.status_simple === 'error') {
-                setSimpleMindmapStatus('error');
-                setSimpleMindmapError(response.data.error_simple || '生成失败');
-                toast.error('快速思维导图生成失败');
-              }
+            if (response.data.status_demo === 'completed' && response.data.mermaid_code_demo) {
+              setDemoMindmapStatus('completed');
+              setDocument(prev => ({
+                ...prev,
+                mermaid_code_demo: response.data.mermaid_code_demo,
+                node_mappings_demo: response.data.node_mappings_demo || {}
+              }));
+              toast.success('论证结构流程图生成完成！');
+            } else if (response.data.status_demo === 'error') {
+              setDemoMindmapStatus('error');
+              toast.error('论证结构分析失败');
             }
           }
         } catch (error) {
@@ -314,7 +255,7 @@ flowchart TD
     return () => {
       if (interval) clearInterval(interval);
     };
-  }, [mindmapStatus, simpleMindmapStatus, documentId, setDocument]);
+  }, [demoMindmapStatus, documentId, setDocument]);
 
   const handleDownloadMarkdown = () => {
     if (!document || !document.content) return;
@@ -342,40 +283,17 @@ flowchart TD
     }
   };
 
-  const handleDownloadMermaid = (mode = 'standard') => {
-    if (!document) return;
-    
-    let mermaidCode;
-    let modeText;
-    let modeSuffix;
-
-    switch (mode) {
-      case 'simple':
-        mermaidCode = document.mermaid_code_simple;
-        modeText = '快速Mermaid代码';
-        modeSuffix = '_simple';
-        break;
-      case 'demo':
-        mermaidCode = document.mermaid_code_demo;
-        modeText = '完整Mermaid代码';
-        modeSuffix = '_complete';
-        break;
-      default:
-        mermaidCode = document.mermaid_code;
-        modeText = '详细Mermaid代码';
-        modeSuffix = '';
-    }
-
-    if (!mermaidCode) return;
+  const handleDownloadMermaid = (mode = 'demo') => {
+    if (!document || !document.mermaid_code_demo) return;
     
     try {
-      const blob = new Blob([mermaidCode], { type: 'text/plain' });
+      const blob = new Blob([document.mermaid_code_demo], { type: 'text/plain' });
       const url = URL.createObjectURL(blob);
       
       if (typeof window !== 'undefined' && window.document && typeof window.document.createElement === 'function') {
         const a = window.document.createElement('a');
         a.href = url;
-        a.download = `${documentId}_mindmap${modeSuffix}.mmd`;
+        a.download = `${documentId}_argument_structure.mmd`;
         if (window.document.body) {
           window.document.body.appendChild(a);
           a.click();
@@ -384,28 +302,14 @@ flowchart TD
       }
       
       URL.revokeObjectURL(url);
-      toast.success(`${modeText}下载成功`);
+      toast.success('论证结构流程图代码下载成功');
     } catch (error) {
       toast.error('下载失败：' + error.message);
     }
   };
 
-  const handleOpenMermaidEditor = (mode = 'standard') => {
-    if (!document) return;
-    
-    let mermaidCode;
-    switch (mode) {
-      case 'simple':
-        mermaidCode = document.mermaid_code_simple;
-        break;
-      case 'demo':
-        mermaidCode = document.mermaid_code_demo;
-        break;
-      default:
-        mermaidCode = document.mermaid_code;
-    }
-
-    if (!mermaidCode) return;
+  const handleOpenMermaidEditor = (mode = 'demo') => {
+    if (!document || !document.mermaid_code_demo) return;
     
     try {
       const safeBtoa = (str) => {
@@ -413,7 +317,7 @@ flowchart TD
       };
       
       const mermaidConfig = {
-        code: mermaidCode,
+        code: document.mermaid_code_demo,
         mermaid: { theme: 'default' }
       };
       
@@ -425,12 +329,12 @@ flowchart TD
     } catch (error) {
       console.error('Error opening Mermaid editor:', error);
       
-      const simpleUrl = `https://mermaid.live/edit#base64:${encodeURIComponent(mermaidCode)}`;
-      window.open(simpleUrl, '_blank');
+          const mermaidEditorUrl = `https://mermaid.live/edit#base64:${encodeURIComponent(document.mermaid_code_demo)}`;
+    window.open(mermaidEditorUrl, '_blank');
       
       if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(mermaidCode).then(() => {
-          toast.success('Mermaid代码已复制到剪贴板，可手动粘贴到编辑器中');
+        navigator.clipboard.writeText(document.mermaid_code_demo).then(() => {
+          toast.success('流程图代码已复制到剪贴板，可手动粘贴到编辑器中');
         }).catch(() => {
           toast.error('无法打开在线编辑器，请手动复制代码');
         });
@@ -441,14 +345,7 @@ flowchart TD
   };
 
   return {
-    mindmapStatus,
-    mindmapError,
-    simpleMindmapStatus,
-    simpleMindmapError,
     demoMindmapStatus,
-    currentMindmapMode,
-    setCurrentMindmapMode,
-    autoStarted,
     startMindmapGeneration,
     handleDownloadMarkdown,
     handleDownloadMermaid,

@@ -1,5 +1,155 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import ReactMarkdown from 'react-markdown';
+
+// 独立的段落渲染函数，避免React Hook规则问题
+const renderParagraphsWithIds = (content, onContentBlockRef) => {
+  if (!content) return null;
+  
+  // 按段落分割内容，保留段落ID标记
+  const paragraphs = content.split(/(\[para-\d+\])/g).filter(part => part.trim());
+  console.log('📍 [段落解析] 总段落数量:', paragraphs.length, '前5个部分:', paragraphs.slice(0, 5));
+  
+  const elements = [];
+  let currentParagraphId = null;
+  let currentContent = '';
+  
+  paragraphs.forEach((part, partIndex) => {
+    const paraIdMatch = part.match(/\[para-(\d+)\]/);
+    
+    if (paraIdMatch) {
+      // 如果有之前的内容，先渲染它
+      if (currentContent.trim() && currentParagraphId) {
+        console.log(`📍 [段落渲染] 渲染段落: ${currentParagraphId}, 内容长度: ${currentContent.trim().length}`);
+        
+        // 🔧 固定当前段落ID，避免闭包陷阱
+        const paragraphIdToRegister = currentParagraphId;
+        const contentPreview = currentContent.substring(0, 50) + '...';
+        
+        elements.push(
+          <div 
+            key={`${currentParagraphId}-content`}
+            id={currentParagraphId}
+            data-para-id={currentParagraphId}
+            className="paragraph-block mb-3 p-2 rounded transition-all duration-200"
+            ref={(el) => {
+              console.log('📍 [段落注册-中间] 注册段落引用:', paragraphIdToRegister, '元素:', !!el, '内容预览:', contentPreview);
+              if (el) {
+                console.log('📍 [段落注册-中间-DOM] 元素DOM信息:', {
+                  id: el.id,
+                  dataParaId: el.getAttribute('data-para-id'),
+                  className: el.className,
+                  offsetTop: el.offsetTop,
+                  clientHeight: el.clientHeight
+                });
+              } else {
+                console.log('📍 [段落注册-中间-DOM] 元素为null，段落:', paragraphIdToRegister);
+              }
+              onContentBlockRef(el, paragraphIdToRegister);
+            }}
+          >
+            <ReactMarkdown
+              components={{
+                h1: ({node, ...props}) => <h1 className="text-2xl font-bold mb-3 text-gray-900 dark:text-white border-b border-gray-200 dark:border-gray-700 pb-2" {...props} />,
+                h2: ({node, ...props}) => <h2 className="text-xl font-semibold mb-2 text-gray-800 dark:text-gray-200 mt-4" {...props} />,
+                h3: ({node, ...props}) => <h3 className="text-lg font-medium mb-2 text-gray-700 dark:text-gray-300 mt-3" {...props} />,
+                h4: ({node, ...props}) => <h4 className="text-base font-medium mb-2 text-gray-700 dark:text-gray-300 mt-2" {...props} />,
+                h5: ({node, ...props}) => <h5 className="text-sm font-medium mb-2 text-gray-700 dark:text-gray-300 mt-2" {...props} />,
+                h6: ({node, ...props}) => <h6 className="text-sm font-medium mb-2 text-gray-700 dark:text-gray-300 mt-2" {...props} />,
+                p: ({node, ...props}) => <p className="mb-3 text-gray-600 dark:text-gray-300 leading-relaxed text-sm" {...props} />,
+                ul: ({node, ...props}) => <ul className="mb-3 ml-4 list-disc" {...props} />,
+                ol: ({node, ...props}) => <ol className="mb-3 ml-4 list-decimal" {...props} />,
+                li: ({node, ...props}) => <li className="mb-1 text-gray-600 dark:text-gray-300 text-sm" {...props} />,
+                blockquote: ({node, ...props}) => (
+                  <blockquote className="border-l-4 border-blue-500 dark:border-blue-400 pl-3 py-2 mb-3 bg-blue-50 dark:bg-blue-900/20 text-gray-700 dark:text-gray-300 italic text-sm" {...props} />
+                ),
+                code: ({node, inline, ...props}) => 
+                  inline 
+                    ? <code className="bg-gray-100 dark:bg-gray-700 px-1 py-0.5 rounded text-xs font-mono text-red-600 dark:text-red-400" {...props} />
+                    : <code className="block bg-gray-900 dark:bg-gray-800 text-green-400 dark:text-green-300 p-3 rounded-lg overflow-x-auto text-xs font-mono" {...props} />,
+                pre: ({node, ...props}) => <pre className="mb-3 overflow-x-auto" {...props} />,
+              }}
+            >
+              {currentContent.trim()}
+            </ReactMarkdown>
+          </div>
+        );
+      }
+      
+      // 设置新的段落ID
+      currentParagraphId = `para-${paraIdMatch[1]}`;
+      currentContent = '';
+      
+      console.log(`📍 [段落解析] 发现段落标记: ${currentParagraphId}`);
+    } else {
+      // 累积内容
+      currentContent += part;
+      console.log(`📍 [内容累积] 当前段落: ${currentParagraphId}, 累积长度: ${currentContent.length}, 新增: ${part.substring(0, 30)}...`);
+    }
+  });
+  
+  // 处理最后一个段落
+  if (currentContent.trim() && currentParagraphId) {
+    console.log(`📍 [段落渲染-最后] 渲染最后段落: ${currentParagraphId}, 内容长度: ${currentContent.trim().length}`);
+    
+    // 🔧 固定当前段落ID，避免闭包陷阱
+    const finalParagraphIdToRegister = currentParagraphId;
+    const finalContentPreview = currentContent.substring(0, 50) + '...';
+    
+    elements.push(
+      <div 
+        key={`${currentParagraphId}-content`}
+        id={currentParagraphId}
+        data-para-id={currentParagraphId}
+        className="paragraph-block mb-3 p-2 rounded transition-all duration-200"
+        ref={(el) => {
+          console.log('📍 [段落注册-最后] 注册段落引用:', finalParagraphIdToRegister, '元素:', !!el, '内容预览:', finalContentPreview);
+          if (el) {
+            console.log('📍 [段落注册-最后-DOM] 元素DOM信息:', {
+              id: el.id,
+              dataParaId: el.getAttribute('data-para-id'),
+              className: el.className,
+              offsetTop: el.offsetTop,
+              clientHeight: el.clientHeight
+            });
+          } else {
+            console.log('📍 [段落注册-最后-DOM] 元素为null，段落:', finalParagraphIdToRegister);
+          }
+          onContentBlockRef(el, finalParagraphIdToRegister);
+        }}
+      >
+        <ReactMarkdown
+          components={{
+            h1: ({node, ...props}) => <h1 className="text-2xl font-bold mb-3 text-gray-900 dark:text-white border-b border-gray-200 dark:border-gray-700 pb-2" {...props} />,
+            h2: ({node, ...props}) => <h2 className="text-xl font-semibold mb-2 text-gray-800 dark:text-gray-200 mt-4" {...props} />,
+            h3: ({node, ...props}) => <h3 className="text-lg font-medium mb-2 text-gray-700 dark:text-gray-300 mt-3" {...props} />,
+            h4: ({node, ...props}) => <h4 className="text-base font-medium mb-2 text-gray-700 dark:text-gray-300 mt-2" {...props} />,
+            h5: ({node, ...props}) => <h5 className="text-sm font-medium mb-2 text-gray-700 dark:text-gray-300 mt-2" {...props} />,
+            h6: ({node, ...props}) => <h6 className="text-sm font-medium mb-2 text-gray-700 dark:text-gray-300 mt-2" {...props} />,
+            p: ({node, ...props}) => <p className="mb-3 text-gray-600 dark:text-gray-300 leading-relaxed text-sm" {...props} />,
+            ul: ({node, ...props}) => <ul className="mb-3 ml-4 list-disc" {...props} />,
+            ol: ({node, ...props}) => <ol className="mb-3 ml-4 list-decimal" {...props} />,
+            li: ({node, ...props}) => <li className="mb-1 text-gray-600 dark:text-gray-300 text-sm" {...props} />,
+            blockquote: ({node, ...props}) => (
+              <blockquote className="border-l-4 border-blue-500 dark:border-blue-400 pl-3 py-2 mb-3 bg-blue-50 dark:bg-blue-900/20 text-gray-700 dark:text-gray-300 italic text-sm" {...props} />
+            ),
+            code: ({node, inline, ...props}) => 
+              inline 
+                ? <code className="bg-gray-100 dark:bg-gray-700 px-1 py-0.5 rounded text-xs font-mono text-red-600 dark:text-red-400" {...props} />
+                : <code className="block bg-gray-900 dark:bg-gray-800 text-green-400 dark:text-green-300 p-3 rounded-lg overflow-x-auto text-xs font-mono" {...props} />,
+            pre: ({node, ...props}) => <pre className="mb-3 overflow-x-auto" {...props} />,
+          }}
+        >
+          {currentContent.trim()}
+        </ReactMarkdown>
+      </div>
+    );
+  } else {
+    console.log(`📍 [段落跳过-最后] 跳过最后段落: ${currentParagraphId}, 内容为空或无段落ID`);
+  }
+  
+  console.log(`📍 [渲染总结] 总共创建了 ${elements.length} 个段落元素`);
+  return elements;
+};
 
 // 结构化Markdown渲染器组件
 const StructuredMarkdownRenderer = ({ content, chunks, onSectionRef }) => {
@@ -44,7 +194,7 @@ const StructuredMarkdownRenderer = ({ content, chunks, onSectionRef }) => {
           ref={(el) => onSectionRef(el, chunk.chunk_id)}
           data-chunk-index={index}
           data-chunk-id={chunk.chunk_id}
-          className="mb-6"
+          className="mb-6 chunk-section transition-all duration-200 ease-in-out border-l-4 border-transparent hover:border-gray-200 dark:hover:border-gray-600"
         >
           {/* 渲染标题 */}
           {chunk.heading && (
@@ -100,9 +250,189 @@ const StructuredMarkdownRenderer = ({ content, chunks, onSectionRef }) => {
   );
 };
 
-// 演示模式渲染器组件 - 专门用于演示模式的内容块渲染
-const DemoModeRenderer = ({ content, onContentBlockRef }) => {
-  // 演示文档的内容块数据
+// 演示模式渲染器组件 - 支持演示模式和真实文档
+const DemoModeRenderer = ({ content, onContentBlockRef, isRealDocument = false, chunks = [] }) => {
+  
+  console.log('📄 [DemoModeRenderer] 渲染器调用参数:');
+  console.log('  - content存在:', !!content);
+  console.log('  - content长度:', content?.length || 0);
+  console.log('  - isRealDocument:', isRealDocument);
+  console.log('  - chunks数量:', chunks?.length || 0);
+  console.log('  - chunks详情:', chunks);
+  
+  // 检查内容是否包含段落ID标记
+  const hasParaIds = content && content.includes('[para-');
+  console.log('📄 [DemoModeRenderer] 内容分析:', {
+    hasParaIds,
+    contentPreview: content?.substring(0, 200) + '...',
+    contentSample: content?.substring(0, 500) // 更长的内容样本
+  });
+  
+  // 强制调试：显示内容中的段落ID匹配
+  if (content) {
+    const paraMatches = content.match(/\[para-\d+\]/g);
+    console.log('📄 [DemoModeRenderer] 找到的段落ID标记:', paraMatches);
+    console.log('📄 [DemoModeRenderer] 段落ID数量:', paraMatches?.length || 0);
+  }
+  
+  // 🔧 缓存段落渲染结果，防止无限重渲染导致的ref注册问题
+  const renderedParagraphs = useMemo(() => {
+    if (content && content.includes('[para-')) {
+      console.log('📄 [useMemo缓存] 重新渲染段落内容，内容长度:', content.length);
+      const result = renderParagraphsWithIds(content, onContentBlockRef);
+      console.log('📄 [useMemo缓存] 段落渲染完成，创建的元素数量:', result?.length || 0);
+      if (result && result.length > 0) {
+        console.log('📄 [useMemo缓存] 第一个元素key:', result[0]?.key);
+        console.log('📄 [useMemo缓存] 最后一个元素key:', result[result.length - 1]?.key);
+      }
+      return result;
+    }
+    return null;
+  }, [content, onContentBlockRef]);
+  
+  console.log('📄 [useMemo缓存] 段落渲染结果缓存状态:', !!renderedParagraphs);
+  
+  // 如果内容包含段落ID标记，直接渲染整个内容而不使用chunks分割
+  if (isRealDocument && hasParaIds) {
+    console.log('📄 [DemoModeRenderer] 进入段落ID模式，使用缓存的段落内容');
+    
+    return (
+      <div className="prose prose-sm max-w-none">
+        {renderedParagraphs}
+      </div>
+    );
+  }
+  
+  // 真实文档模式：基于chunks的结构化渲染（没有段落ID时）
+  if (isRealDocument && chunks && chunks.length > 0) {
+    console.log('📄 [DemoModeRenderer] 进入真实文档chunks模式，chunks数量:', chunks.length);
+    
+    return (
+      <div className="prose prose-sm max-w-none">
+        {chunks.map((chunk, index) => {
+          const blockId = `chunk-${index + 1}`;
+          
+          console.log(`📄 [DemoModeRenderer] 渲染chunk ${index + 1}:`, {
+            blockId,
+            chunkId: chunk.chunk_id,
+            title: chunk.title,
+            contentLength: chunk.content?.length || 0
+          });
+          
+          // 使用常规的 ReactMarkdown 渲染（chunks模式下的内容没有段落ID标记）
+          const renderChunkContent = (content) => {
+            if (!content) return null;
+            
+            return (
+              <ReactMarkdown
+                components={{
+                  h1: ({node, ...props}) => <h1 className="text-2xl font-bold mb-3 text-gray-900 dark:text-white border-b border-gray-200 dark:border-gray-700 pb-2" {...props} />,
+                  h2: ({node, ...props}) => <h2 className="text-xl font-semibold mb-2 text-gray-800 dark:text-gray-200 mt-4" {...props} />,
+                  h3: ({node, ...props}) => <h3 className="text-lg font-medium mb-2 text-gray-700 dark:text-gray-300 mt-3" {...props} />,
+                  h4: ({node, ...props}) => <h4 className="text-base font-medium mb-2 text-gray-700 dark:text-gray-300 mt-2" {...props} />,
+                  h5: ({node, ...props}) => <h5 className="text-sm font-medium mb-2 text-gray-700 dark:text-gray-300 mt-2" {...props} />,
+                  h6: ({node, ...props}) => <h6 className="text-sm font-medium mb-2 text-gray-700 dark:text-gray-300 mt-2" {...props} />,
+                  p: ({node, ...props}) => <p className="mb-3 text-gray-600 dark:text-gray-300 leading-relaxed text-sm" {...props} />,
+                  ul: ({node, ...props}) => <ul className="mb-3 ml-4 list-disc" {...props} />,
+                  ol: ({node, ...props}) => <ol className="mb-3 ml-4 list-decimal" {...props} />,
+                  li: ({node, ...props}) => <li className="mb-1 text-gray-600 dark:text-gray-300 text-sm" {...props} />,
+                  blockquote: ({node, ...props}) => (
+                    <blockquote className="border-l-4 border-blue-500 dark:border-blue-400 pl-3 py-2 mb-3 bg-blue-50 dark:bg-blue-900/20 text-gray-700 dark:text-gray-300 italic text-sm" {...props} />
+                  ),
+                  code: ({node, inline, ...props}) => 
+                    inline 
+                      ? <code className="bg-gray-100 dark:bg-gray-700 px-1 py-0.5 rounded text-xs font-mono text-red-600 dark:text-red-400" {...props} />
+                      : <code className="block bg-gray-900 dark:bg-gray-800 text-green-400 dark:text-green-300 p-3 rounded-lg overflow-x-auto text-xs font-mono" {...props} />,
+                  pre: ({node, ...props}) => <pre className="mb-3 overflow-x-auto" {...props} />,
+                }}
+              >
+                {content}
+              </ReactMarkdown>
+            );
+          };
+          
+          return (
+            <div 
+              key={chunk.chunk_id}
+              id={blockId}
+              className="content-block mb-6 p-4 border-l-4 border-transparent transition-all duration-200"
+              ref={(el) => onContentBlockRef(el, blockId)}
+            >
+              {/* 渲染标题 */}
+              {chunk.heading && (
+                <div className="mb-3">
+                  <ReactMarkdown
+                    components={{
+                      h1: ({node, ...props}) => <h1 className="text-2xl font-bold mb-3 text-gray-900 dark:text-white border-b border-gray-200 dark:border-gray-700 pb-2" {...props} />,
+                      h2: ({node, ...props}) => <h2 className="text-xl font-semibold mb-2 text-gray-800 dark:text-gray-200 mt-4" {...props} />,
+                      h3: ({node, ...props}) => <h3 className="text-lg font-medium mb-2 text-gray-700 dark:text-gray-300 mt-3" {...props} />,
+                      h4: ({node, ...props}) => <h4 className="text-base font-medium mb-2 text-gray-700 dark:text-gray-300 mt-2" {...props} />,
+                      h5: ({node, ...props}) => <h5 className="text-sm font-medium mb-2 text-gray-700 dark:text-gray-300 mt-2" {...props} />,
+                      h6: ({node, ...props}) => <h6 className="text-sm font-medium mb-2 text-gray-700 dark:text-gray-300 mt-2" {...props} />,
+                    }}
+                  >
+                    {chunk.heading}
+                  </ReactMarkdown>
+                </div>
+              )}
+              
+              {/* 渲染内容 */}
+              {chunk.content && renderChunkContent(chunk.content)}
+            </div>
+          );
+        })}
+      </div>
+    );
+  }
+  
+  // 传入真实内容但没有chunks的情况（向后兼容）
+  if (content && !isRealDocument) {
+    console.log('📄 [DemoModeRenderer] 进入向后兼容模式（content存在但非真实文档）');
+    
+    // 如果内容包含段落ID，使用段落ID渲染逻辑
+    if (content.includes('[para-')) {
+      console.log('📄 [向后兼容] 检测到段落ID，使用缓存的段落内容');
+      
+      return (
+        <div className="prose prose-sm max-w-none">
+          {renderedParagraphs}
+        </div>
+      );
+    }
+    
+    // 普通内容渲染
+    return (
+      <div className="prose prose-sm max-w-none">
+        <ReactMarkdown
+          components={{
+            h1: ({node, ...props}) => <h1 className="text-2xl font-bold mb-3 text-gray-900 dark:text-white border-b border-gray-200 dark:border-gray-700 pb-2" {...props} />,
+            h2: ({node, ...props}) => <h2 className="text-xl font-semibold mb-2 text-gray-800 dark:text-gray-200 mt-4" {...props} />,
+            h3: ({node, ...props}) => <h3 className="text-lg font-medium mb-2 text-gray-700 dark:text-gray-300 mt-3" {...props} />,
+            h4: ({node, ...props}) => <h4 className="text-base font-medium mb-2 text-gray-700 dark:text-gray-300 mt-2" {...props} />,
+            h5: ({node, ...props}) => <h5 className="text-sm font-medium mb-2 text-gray-700 dark:text-gray-300 mt-2" {...props} />,
+            h6: ({node, ...props}) => <h6 className="text-sm font-medium mb-2 text-gray-700 dark:text-gray-300 mt-2" {...props} />,
+            p: ({node, ...props}) => <p className="mb-3 text-gray-600 dark:text-gray-300 leading-relaxed text-sm" {...props} />,
+            ul: ({node, ...props}) => <ul className="mb-3 ml-4 list-disc" {...props} />,
+            ol: ({node, ...props}) => <ol className="mb-3 ml-4 list-decimal" {...props} />,
+            li: ({node, ...props}) => <li className="mb-1 text-gray-600 dark:text-gray-300 text-sm" {...props} />,
+            blockquote: ({node, ...props}) => (
+              <blockquote className="border-l-4 border-blue-500 dark:border-blue-400 pl-3 py-2 mb-3 bg-blue-50 dark:bg-blue-900/20 text-gray-700 dark:text-gray-300 italic text-sm" {...props} />
+            ),
+            code: ({node, inline, ...props}) => 
+              inline 
+                ? <code className="bg-gray-100 dark:bg-gray-700 px-1 py-0.5 rounded text-xs font-mono text-red-600 dark:text-red-400" {...props} />
+                : <code className="block bg-gray-900 dark:bg-gray-800 text-green-400 dark:text-green-300 p-3 rounded-lg overflow-x-auto text-xs font-mono" {...props} />,
+            pre: ({node, ...props}) => <pre className="mb-3 overflow-x-auto" {...props} />,
+          }}
+        >
+          {content}
+        </ReactMarkdown>
+      </div>
+    );
+  }
+
+  // 演示文档的内容块数据（只在纯示例模式下使用）
+  console.log('📄 [DemoModeRenderer] 进入纯示例模式（使用硬编码内容）');
   const demoContentBlocks = [
     {
       id: "text-A-introduction",
@@ -227,7 +557,10 @@ const DemoModeRenderer = ({ content, onContentBlockRef }) => {
           key={block.id}
           id={block.id}
           className="content-block mb-6 p-4"
-          ref={(el) => onContentBlockRef(el, block.id)}
+          ref={(el) => {
+            console.log('📍 [示例文档] 注册示例段落引用:', block.id, !!el);
+            onContentBlockRef(el, block.id);
+          }}
         >
           <ReactMarkdown
             components={{
