@@ -50,8 +50,7 @@ PDF_OUTPUT_DIR.mkdir(exist_ok=True)
 # 存储文档状态的内存数据库
 document_status = {}
 
-# 存储AI辅助阅读问题的内存数据库（保留但禁用使用）
-reading_questions = {}
+
 
 # 存储文档结构的内存数据库
 document_structures = {}

@@ -8,13 +8,13 @@ import ThemeToggle from './ThemeToggle';
 import { useDocumentViewer } from '../hooks/useDocumentViewer';
 import { useMindmapGeneration } from '../hooks/useMindmapGeneration';
 import { usePanelResize } from '../hooks/usePanelResize';
-import { useReadingAssistant } from '../hooks/useReadingAssistant';
+
 import { useScrollDetection } from '../hooks/useScrollDetection';
 
 // 导入UI组件
 import TableOfContents from './TableOfContents';
 import PDFViewer from './PDFViewer';
-import ReadingAssistantUI from './ReadingAssistantUI';
+
 import { StructuredMarkdownRenderer, DemoModeRenderer } from './DocumentRenderer';
 
 const ViewerPageRefactored = () => {
@@ -60,17 +60,7 @@ const ViewerPageRefactored = () => {
     handleMouseDown
   } = usePanelResize();
 
-  // 使用AI阅读助手 hook (禁用状态)
-  const {
-    readingQuestionsStatus,
-    readingQuestions,
-    currentQuestions,
-    questionHistory,
-    showReadingAssistant,
-    setShowReadingAssistant,
-    generateReadingQuestions,
-    checkForNewQuestions
-  } = useReadingAssistant(documentId, document);
+
 
   // 使用滚动检测 hook
   const {
@@ -89,8 +79,6 @@ const ViewerPageRefactored = () => {
     containerRef,
     documentId,
     'argument', // 论证结构分析模式
-    showReadingAssistant,
-    checkForNewQuestions,
     mermaidDiagramRef
   );
 

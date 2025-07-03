@@ -72,7 +72,7 @@ const nodeToTextMap = {
   "K2": "text-K2-truth-revelation"
 };
 
-export const useScrollDetection = (containerRef, documentId, currentMindmapMode, showReadingAssistant, checkForNewQuestions, mermaidDiagramRef) => {
+export const useScrollDetection = (containerRef, documentId, currentMindmapMode, mermaidDiagramRef) => {
   const [activeChunkId, setActiveChunkId] = useState(null);
   const [activeContentBlockId, setActiveContentBlockId] = useState(null);
   const [previousActiveNode, setPreviousActiveNode] = useState(null);
@@ -387,17 +387,13 @@ export const useScrollDetection = (containerRef, documentId, currentMindmapMode,
           }
         }
         
-        // 检查AI阅读问题（如果启用）
-        if (currentActiveParagraphId && showReadingAssistant) {
-          console.log("📖 [段落检测] 调用AI问题检查，段落:", currentActiveParagraphId);
-          checkForNewQuestions(currentActiveParagraphId);
-        }
+
         
         return currentActiveParagraphId;
       }
       return prevId;
     });
-  }, [highlightParagraph, highlightMermaidNode, textToNodeMap, dynamicTextToNodeMap, showReadingAssistant, checkForNewQuestions]);
+  }, [highlightParagraph, highlightMermaidNode, textToNodeMap, dynamicTextToNodeMap]);
 
   // 等待Mermaid图表渲染完成的检查函数 - 移到顶层作用域
   const waitForMermaidRender = useCallback(() => {
@@ -429,84 +425,105 @@ export const useScrollDetection = (containerRef, documentId, currentMindmapMode,
   const initializeDetection = useCallback(async () => {
     console.log('🎨 [统一模式] 开始初始化内容块检测，文档ID:', documentId);
     
-    // 等待Mermaid图表渲染
-    await waitForMermaidRender();
-    
-    // 统一使用内容块检测，因为现在所有模式都使用 DemoModeRenderer
+    // 立即启动段落检测，不等待思维导图渲染
     setTimeout(() => {
       console.log('🎨 [统一模式] 执行初始内容块检测');
       determineActiveParagraph();
     }, 300);
+    
+    // 如果存在思维导图，额外等待渲染完成后再次检测
+    const mermaidElement = window.document?.querySelector('.mermaid, [data-processed-by-mermaid]');
+    if (mermaidElement) {
+      console.log('🎨 [思维导图检测] 发现思维导图，等待渲染完成');
+      await waitForMermaidRender();
+      setTimeout(() => {
+        console.log('🎨 [思维导图检测] 思维导图渲染完成，重新执行段落检测');
+        determineActiveParagraph();
+      }, 100);
+    }
   }, [documentId, waitForMermaidRender, determineActiveParagraph]);
 
-  // 段落级滚动检测逻辑
+  // 段落级滚动检测逻辑 - 使用稳定的引用避免重复执行
   useEffect(() => {
-    console.log('🔧 [段落滚动检测] useEffect触发，段落数量:', contentBlockRefs.current.size);
+    console.log('🔧 [段落滚动检测] useEffect触发，文档ID:', documentId);
     
-    // 设置定时检查，等待段落注册完成
-    const checkParagraphs = () => {
-      if (contentBlockRefs.current.size > 0) {
-        console.log('🔧 [段落滚动检测] 检测到段落，开始初始化滚动检测');
-        
-        // 初始检测当前阅读的段落
-        setTimeout(() => {
-          console.log('🔧 [段落滚动检测] 执行初始段落检测');
-          determineActiveParagraph();
-        }, 100);
-        
-        return true; // 表示已找到段落
-      }
-      return false; // 继续等待
-    };
-
-    // 立即检查一次
-    if (checkParagraphs()) {
-      // 如果已经有段落，直接开始
-    } else {
-      // 如果没有段落，定时检查
-      const checkInterval = setInterval(() => {
-        if (checkParagraphs()) {
-          clearInterval(checkInterval);
-        }
-      }, 100);
-      
-      // 5秒后停止检查
-      setTimeout(() => {
-        clearInterval(checkInterval);
-        console.log('🔧 [段落滚动检测] 停止等待段落注册');
-      }, 5000);
-    }
-
-    // 创建节流处理函数 - 使用段落检测
+    // 创建节流处理函数 - 使用段落检测，但引用最新的函数
     const throttledHandler = throttle(() => {
       if (contentBlockRefs.current.size > 0) {
         console.log('📜 [滚动事件] 触发段落检测');
-        determineActiveParagraph();
-      }
-    }, 200); // 每200ms最多执行一次
+        // 直接调用最新的段落检测逻辑，避免闭包问题
+        const viewportHeight = window.innerHeight;
+        const anchorY = viewportHeight * 0.4;
 
-    // 查找滚动容器 - 改进查找逻辑
+        let currentActiveParagraphId = null;
+        let bestDistance = Infinity;
+
+        contentBlockRefs.current.forEach((element, blockId) => {
+          const rect = element.getBoundingClientRect();
+          const paragraphCenter = rect.top + rect.height / 2;
+          const distance = Math.abs(paragraphCenter - anchorY);
+          
+          if (rect.top < viewportHeight && rect.bottom > 0 && distance < bestDistance) {
+            currentActiveParagraphId = blockId;
+            bestDistance = distance;
+          }
+        });
+
+        // 直接调用状态更新
+        setActiveContentBlockId(prevId => {
+          if (prevId !== currentActiveParagraphId) {
+            console.log("📜 [滚动事件] 活动段落变更:", prevId, "→", currentActiveParagraphId);
+            
+            // 触发段落高亮
+            if (currentActiveParagraphId) {
+              // 异步调用高亮函数，避免状态更新冲突
+              setTimeout(() => {
+                // 重新获取最新的函数引用
+                const currentBlock = contentBlockRefs.current.get(currentActiveParagraphId);
+                if (currentBlock) {
+                  // 移除所有之前的高亮
+                  const allElements = window.document.querySelectorAll('.paragraph-block, .content-block, [id^="para-"], [data-para-id], [id^="text-"], [id^="chunk-"]');
+                  allElements.forEach(element => {
+                    if (element && element.classList) {
+                      element.classList.remove('semantic-paragraph-highlighted');
+                    }
+                  });
+                  
+                  // 添加新高亮
+                  currentBlock.classList.add('semantic-paragraph-highlighted');
+                  console.log('📜 [滚动事件] 成功高亮段落:', currentActiveParagraphId);
+                }
+              }, 0);
+            }
+            
+            return currentActiveParagraphId;
+          }
+          return prevId;
+        });
+      }
+    }, 200);
+
+    // 查找滚动容器
     let scrollContainer = null;
     
-    if (containerRef.current) {
-      // 尝试多种选择器
-      const selectors = [
-        '.overflow-y-auto',
-        '[style*="overflow-y: auto"]',
-        '[style*="overflow: auto"]',
-        '.h-full.overflow-hidden.flex.flex-col > div:last-child', // 文档阅读器的滚动区域
-      ];
-      
-      for (const selector of selectors) {
-        scrollContainer = containerRef.current.querySelector(selector);
-        if (scrollContainer) {
-          console.log('📜 [滚动检测] 找到滚动容器，选择器:', selector);
-          break;
+    const findScrollContainer = () => {
+      if (containerRef.current) {
+        const selectors = [
+          '.overflow-y-auto',
+          '[style*="overflow-y: auto"]',
+          '[style*="overflow: auto"]',
+          '.h-full.overflow-hidden.flex.flex-col > div:last-child',
+        ];
+        
+        for (const selector of selectors) {
+          scrollContainer = containerRef.current.querySelector(selector);
+          if (scrollContainer) {
+            console.log('📜 [滚动检测] 找到滚动容器，选择器:', selector);
+            return scrollContainer;
+          }
         }
-      }
-      
-      // 如果还是没找到，尝试查找所有可能的滚动元素
-      if (!scrollContainer) {
+        
+        // 通过样式检测
         const allElements = containerRef.current.querySelectorAll('*');
         for (const el of allElements) {
           const style = window.getComputedStyle(el);
@@ -514,24 +531,34 @@ export const useScrollDetection = (containerRef, documentId, currentMindmapMode,
               style.overflow === 'auto' || style.overflow === 'scroll') {
             scrollContainer = el;
             console.log('📜 [滚动检测] 通过样式检测找到滚动容器:', el.className);
-            break;
+            return scrollContainer;
           }
         }
       }
-    }
-    
-    if (scrollContainer) {
-      console.log('📜 [滚动检测] 添加滚动监听到容器');
-      scrollContainer.addEventListener('scroll', throttledHandler, { passive: true });
-    } else {
-      console.log('📜 [滚动检测] 未找到滚动容器，使用window滚动监听');
-      window.addEventListener('scroll', throttledHandler, { passive: true });
-    }
-    
-    window.addEventListener('resize', throttledHandler, { passive: true });
+      return null;
+    };
+
+    // 延迟设置监听器，确保DOM已经渲染
+    const setupScrollListener = () => {
+      scrollContainer = findScrollContainer();
+      
+      if (scrollContainer) {
+        console.log('📜 [滚动检测] 添加滚动监听到容器');
+        scrollContainer.addEventListener('scroll', throttledHandler, { passive: true });
+      } else {
+        console.log('📜 [滚动检测] 未找到滚动容器，使用window滚动监听');
+        window.addEventListener('scroll', throttledHandler, { passive: true });
+      }
+      
+      window.addEventListener('resize', throttledHandler, { passive: true });
+    };
+
+    // 延迟设置，确保DOM完全加载
+    const timer = setTimeout(setupScrollListener, 300);
 
     return () => {
       console.log('🔧 [段落滚动检测] 清理事件监听器');
+      clearTimeout(timer);
       if (scrollContainer) {
         scrollContainer.removeEventListener('scroll', throttledHandler);
       } else {
@@ -539,7 +566,7 @@ export const useScrollDetection = (containerRef, documentId, currentMindmapMode,
       }
       window.removeEventListener('resize', throttledHandler);
     };
-  }, [determineActiveParagraph]); // 依赖段落检测函数
+  }, [documentId]); // 只依赖documentId，避免频繁重新执行
 
   // 统一的初始化检测 - 在内容加载完成后启动
   useEffect(() => {
