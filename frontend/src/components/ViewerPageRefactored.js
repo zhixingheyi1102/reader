@@ -158,15 +158,89 @@ const ViewerPageRefactored = () => {
       const mermaidCode = document.mermaid_code_demo;
       const nodeMapping = document.node_mappings_demo;
       
+      console.log('🔗 [主组件动态映射] useEffect触发条件检查:');
+      console.log('🔗 [主组件动态映射] documentId是否非demo:', !documentId.startsWith('demo-'));
+      console.log('🔗 [主组件动态映射] document存在:', !!document);
+      console.log('🔗 [主组件动态映射] document.content存在:', !!document?.content);
+      console.log('🔗 [主组件动态映射] chunksLoaded:', chunksLoaded);
+      console.log('🔗 [主组件动态映射] contentChunks.current数量:', contentChunks.current?.length || 0);
+      console.log('🔗 [主组件动态映射] mermaidCode存在:', !!mermaidCode);
+      console.log('🔗 [主组件动态映射] mermaidCode长度:', mermaidCode?.length || 0);
+      console.log('🔗 [主组件动态映射] nodeMapping存在:', !!nodeMapping);
+      console.log('🔗 [主组件动态映射] nodeMapping类型:', typeof nodeMapping);
+      console.log('🔗 [主组件动态映射] nodeMapping内容:', nodeMapping);
+      console.log('🔗 [主组件动态映射] nodeMapping键数量:', nodeMapping ? Object.keys(nodeMapping).length : 0);
+      
       if (mermaidCode && contentChunks.current.length > 0) {
-        console.log('🔗 [主组件] 准备创建动态映射，chunks数量:', contentChunks.current.length);
-        console.log('🔗 [主组件] 节点映射数据:', nodeMapping);
+        console.log('🔗 [主组件] ✅ 准备创建动态映射');
+        console.log('🔗 [主组件] 参数检查 - chunks数量:', contentChunks.current.length);
+        console.log('🔗 [主组件] 参数检查 - mermaidCode前100字符:', mermaidCode.substring(0, 100));
+        console.log('🔗 [主组件] 参数检查 - nodeMapping详情:', JSON.stringify(nodeMapping, null, 2));
+        
+        // 调用更新动态映射函数
+        console.log('🔗 [主组件] 📞 正在调用updateDynamicMapping...');
         updateDynamicMapping(contentChunks.current, mermaidCode, nodeMapping);
-      } else if (!mermaidCode) {
-        console.log('🔗 [主组件] 等待思维导图生成完成...');
+        console.log('🔗 [主组件] ✅ updateDynamicMapping调用完成');
+      } else {
+        console.log('🔗 [主组件] ❌ 动态映射创建条件不满足:');
+        if (!mermaidCode) {
+          console.log('🔗 [主组件] - 缺少mermaidCode，等待思维导图生成完成...');
+        }
+        if (contentChunks.current.length === 0) {
+          console.log('🔗 [主组件] - 缺少contentChunks，chunks数量:', contentChunks.current.length);
+        }
       }
+    } else {
+      console.log('🔗 [主组件动态映射] useEffect触发条件不满足:');
+      console.log('🔗 [主组件动态映射] - documentId:', documentId);
+      console.log('🔗 [主组件动态映射] - 是否demo模式:', documentId.startsWith('demo-'));
+      console.log('🔗 [主组件动态映射] - document存在:', !!document);
+      console.log('🔗 [主组件动态映射] - chunksLoaded:', chunksLoaded);
     }
   }, [document, chunksLoaded, updateDynamicMapping, documentId]);
+
+  // 调试文档状态
+  useEffect(() => {
+    if (document) {
+      console.log('📄 [文档调试] 文档加载完成，基本信息:');
+      console.log('📄 [文档调试] - documentId:', documentId);
+      console.log('📄 [文档调试] - 是否demo模式:', documentId.startsWith('demo-'));
+      console.log('📄 [文档调试] - document.content存在:', !!document.content);
+      console.log('📄 [文档调试] - document.content长度:', document.content?.length || 0);
+      console.log('📄 [文档调试] - document.mermaid_code_demo存在:', !!document.mermaid_code_demo);
+      console.log('📄 [文档调试] - document.mermaid_code_demo长度:', document.mermaid_code_demo?.length || 0);
+      console.log('📄 [文档调试] - document.node_mappings_demo存在:', !!document.node_mappings_demo);
+      console.log('📄 [文档调试] - document.node_mappings_demo类型:', typeof document.node_mappings_demo);
+      if (document.node_mappings_demo) {
+        console.log('📄 [文档调试] - node_mappings_demo键数量:', Object.keys(document.node_mappings_demo).length);
+        console.log('📄 [文档调试] - node_mappings_demo样本键:', Object.keys(document.node_mappings_demo).slice(0, 3));
+      }
+      console.log('📄 [文档调试] - 完整document对象:', document);
+      
+      // 暴露全局调试函数
+      if (typeof window !== 'undefined') {
+        window.debugDocument = () => {
+          console.log('=== 📄 文档调试信息 ===');
+          console.log('文档ID:', documentId);
+          console.log('文档对象:', document);
+          console.log('chunks加载状态:', chunksLoaded);
+          console.log('chunks数据:', contentChunks.current);
+          console.log('思维导图代码:', document?.mermaid_code_demo?.substring(0, 200) + '...');
+          console.log('节点映射:', document?.node_mappings_demo);
+          console.log('=== 📄 调试信息结束 ===');
+          return {
+            documentId,
+            document,
+            chunksLoaded,
+            chunks: contentChunks.current,
+            mermaidCode: document?.mermaid_code_demo,
+            nodeMapping: document?.node_mappings_demo
+          };
+        };
+        console.log('🔧 [全局调试] debugDocument函数已挂载，可在控制台调用 window.debugDocument()');
+      }
+    }
+  }, [document, documentId, chunksLoaded]);
 
   // 加载状态
   if (loading) {
