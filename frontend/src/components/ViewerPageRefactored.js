@@ -1,6 +1,9 @@
 import React, { useState, useRef, useCallback, useEffect, useMemo } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { ArrowLeft, Download, Eye, EyeOff, FileText, File, Bot } from 'lucide-react';
+import axios from 'axios';
+import { toast, ToastContainer } from 'react-toastify';
+import 'react-toastify/dist/ReactToastify.css';
 import FlowDiagram from './FlowDiagram';
 import ThemeToggle from './ThemeToggle';
 
@@ -262,6 +265,193 @@ const ViewerPageRefactored = () => {
     }
   }, [document, documentId, chunksLoaded]);
 
+  // 处理 node_mappings 更新的函数
+  const handleNodeMappingUpdate = useCallback(async (newNodeMappings) => {
+    try {
+      console.log('📍 [节点映射更新] 开始更新 node_mappings:', newNodeMappings);
+      
+      // 更新前端状态
+      setDocument(prev => ({
+        ...prev,
+        node_mappings_demo: newNodeMappings
+      }));
+      
+      console.log('📍 [节点映射更新] 前端状态已更新');
+      
+      // 如果不是示例模式，调用后端API进行持久化
+      if (!documentId.startsWith('demo-')) {
+        console.log('📍 [节点映射更新] 开始调用后端API保存映射');
+        
+        const response = await axios.post(`http://localhost:8000/api/document/${documentId}/remap`, {
+          node_mappings: newNodeMappings
+        });
+        
+        if (response.data.success) {
+          console.log('📍 [节点映射更新] ✅ 后端保存成功');
+          toast.success('拖拽排序已保存');
+        } else {
+          console.error('📍 [节点映射更新] ❌ 后端保存失败:', response.data.message);
+          toast.error('保存失败: ' + response.data.message);
+        }
+      } else {
+        console.log('📍 [节点映射更新] 示例模式，跳过后端保存');
+      }
+      
+      // 更新动态映射以反映新的节点关系
+      if (contentChunks.current.length > 0 && document && document.mermaid_code_demo) {
+        console.log('📍 [节点映射更新] 重新生成动态映射');
+        updateDynamicMapping(contentChunks.current, document.mermaid_code_demo, newNodeMappings);
+      }
+      
+    } catch (error) {
+      console.error('📍 [节点映射更新] 错误:', error);
+      const errorMessage = error.response?.data?.detail || '保存节点映射失败';
+      toast.error(errorMessage);
+    }
+  }, [documentId, setDocument, updateDynamicMapping, document]);
+
+  // 处理拖拽排序后的回调函数
+  const handleOrderChange = useCallback(async (newItems) => {
+    try {
+      console.log('📍 [排序更新] 开始处理拖拽排序结果');
+      console.log('📍 [排序更新] 新项目顺序数组长度:', newItems?.length || 0);
+      console.log('📍 [排序更新] 新项目顺序:', newItems);
+      
+      // 健壮性检查
+      if (!newItems || newItems.length === 0) {
+        console.warn('📍 [排序更新] ⚠️ 新项目数组为空，跳过处理');
+        return;
+      }
+      
+      // 健壮性检查：确保 document 对象存在
+      const docObj = document;
+      if (!docObj) {
+        console.warn('📍 [排序更新] ⚠️ document 对象不存在，跳过处理');
+        return;
+      }
+      
+      // 重新计算 node_mappings - 使用 SortableContentRenderer 中的重构版本逻辑
+      const recalculateNodeMappings = (sortedItems) => {
+        console.log('📍 [排序更新-重新计算] 开始重新计算 node_mappings');
+        console.log('📍 [排序更新-重新计算] 输入参数:', { 
+          sortedItemsLength: sortedItems?.length || 0, 
+          nodeMapping: !!docObj.node_mappings_demo
+        });
+        
+        // 健壮性检查：如果输入的 items 数组为空，返回空的 node_mappings 对象
+        if (!sortedItems || sortedItems.length === 0) {
+          console.log('📍 [排序更新-重新计算] ⚠️ 输入项目为空，返回空映射');
+          return {};
+        }
+        
+        if (!docObj.node_mappings_demo) {
+          console.log('📍 [排序更新-重新计算] ⚠️ 缺少节点映射，跳过重新计算');
+          return {};
+        }
+        
+        const newNodeMappings = {};
+        let currentNodeId = null;
+        
+        // 获取第一个节点ID作为默认值，处理段落出现在所有分割线之前的边界情况
+        const firstNodeId = Object.keys(docObj.node_mappings_demo)[0];
+        console.log('📍 [排序更新-重新计算] 默认第一个节点ID:', firstNodeId);
+        
+        // 遍历排序后的项目列表
+        sortedItems.forEach((item, index) => {
+          if (item.type === 'divider') {
+            // 遇到分割线，设置当前节点ID
+            currentNodeId = item.nodeId;
+            console.log(`📍 [排序更新-重新计算] 位置 ${index}: 进入节点 ${currentNodeId}`);
+          } else if (item.type === 'paragraph') {
+            // 遇到段落，将其分配给当前节点
+            // 如果还没有遇到分割线，使用第一个节点作为默认值
+            const targetNodeId = currentNodeId || firstNodeId;
+            
+            if (targetNodeId) {
+              // 确保 newNodeMappings[targetNodeId] 已经存在并且是一个包含 paragraph_ids 数组的对象
+              if (!newNodeMappings[targetNodeId]) {
+                // 从原始 nodeMapping 中复制节点信息
+                newNodeMappings[targetNodeId] = {
+                  ...docObj.node_mappings_demo[targetNodeId],
+                  paragraph_ids: []
+                };
+                console.log(`📍 [排序更新-重新计算] 初始化节点 ${targetNodeId} 的映射`);
+              }
+              
+              // 将段落ID添加到当前节点
+              newNodeMappings[targetNodeId].paragraph_ids.push(item.paragraphId);
+              console.log(`📍 [排序更新-重新计算] 位置 ${index}: 段落 ${item.paragraphId} 分配给节点 ${targetNodeId}`);
+            } else {
+              console.warn(`📍 [排序更新-重新计算] 警告: 段落 ${item.paragraphId} 在位置 ${index} 没有对应的节点`);
+            }
+          }
+        });
+        
+        console.log('📍 [排序更新-重新计算] 新的 node_mappings:', newNodeMappings);
+        return newNodeMappings;
+      };
+      
+      // 重新计算节点映射
+      const newNodeMappings = recalculateNodeMappings(newItems);
+      
+      if (Object.keys(newNodeMappings).length === 0) {
+        console.warn('📍 [排序更新] ⚠️ 重新计算结果为空，跳过后续处理');
+        return;
+      }
+      
+      console.log('📍 [排序更新] 开始更新前端状态');
+      
+      // 更新前端状态
+      setDocument(prev => {
+        if (!prev) {
+          console.warn('📍 [排序更新] ⚠️ 前一个文档状态不存在，无法更新');
+          return prev;
+        }
+        
+        const updatedDocument = {
+          ...prev,
+          node_mappings_demo: newNodeMappings
+        };
+        console.log('📍 [排序更新] 前端状态已更新');
+        
+        // 立即重新生成动态映射
+        if (contentChunks.current.length > 0 && prev.mermaid_code_demo) {
+          console.log('📍 [排序更新] 重新生成动态映射');
+          updateDynamicMapping(contentChunks.current, prev.mermaid_code_demo, newNodeMappings);
+        }
+        
+        return updatedDocument;
+      });
+      
+      console.log('📍 [排序更新] 开始调用后端API保存映射');
+      
+      // 如果不是示例模式，调用后端API进行持久化
+      if (!documentId.startsWith('demo-')) {
+        console.log('📍 [排序更新] 调用后端API保存节点映射');
+        
+        const response = await axios.post(`http://localhost:8000/api/document/${documentId}/remap`, {
+          node_mappings: newNodeMappings
+        });
+        
+        if (response.data.success) {
+          console.log('📍 [排序更新] ✅ 后端保存成功');
+          toast.success('拖拽排序已保存');
+        } else {
+          console.error('📍 [排序更新] ❌ 后端保存失败:', response.data.message);
+          toast.error('保存失败: ' + response.data.message);
+        }
+      } else {
+        console.log('📍 [排序更新] 示例模式，跳过后端保存');
+        toast.success('拖拽排序已更新（示例模式）');
+      }
+      
+    } catch (error) {
+      console.error('📍 [排序更新] 错误:', error);
+      const errorMessage = error.response?.data?.detail || '处理拖拽排序失败';
+      toast.error(errorMessage);
+    }
+  }, [documentId, document, setDocument, updateDynamicMapping]);
+
   // 加载状态
   if (loading) {
     return (
@@ -468,6 +658,8 @@ const ViewerPageRefactored = () => {
                     content={null}
                     onContentBlockRef={handleContentBlockRef}
                     nodeMapping={document.node_mappings_demo}
+                    onNodeMappingUpdate={handleNodeMappingUpdate}
+                    onOrderChange={handleOrderChange}
                   />
                 );
               }
@@ -505,6 +697,8 @@ const ViewerPageRefactored = () => {
                   isRealDocument={!documentId.startsWith('demo-')}
                   chunks={contentChunks.current}
                   nodeMapping={document.node_mappings_demo}
+                  onNodeMappingUpdate={handleNodeMappingUpdate}
+                  onOrderChange={handleOrderChange}
                 />
               );
             })()}
@@ -599,6 +793,7 @@ const ViewerPageRefactored = () => {
           </div>
         </div>
       </div>
+      <ToastContainer />
     </div>
   );
 };

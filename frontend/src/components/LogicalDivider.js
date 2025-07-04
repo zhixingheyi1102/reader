@@ -1,8 +1,8 @@
 import React from 'react';
 import { GripVertical } from 'lucide-react';
 
-const LogicalDivider = ({ nodeInfo }) => {
-  const { title, id, color = 'gray' } = nodeInfo;
+const LogicalDivider = ({ nodeInfo, dragHandleProps }) => {
+  const { title, color = 'gray' } = nodeInfo;
   
   // 根据颜色获取对应的Tailwind类
   const getColorClasses = (color) => {
@@ -18,20 +18,24 @@ const LogicalDivider = ({ nodeInfo }) => {
   };
 
   return (
-    <div className="relative my-6 group">
+    <div className="relative my-6">
       {/* 水平分割线 */}
       <div className={`border-t-2 ${getColorClasses(color).split(' ')[0]} ${getColorClasses(color).split(' ')[1]}`} />
       
       {/* 拖拽手柄和标签容器 */}
       <div className="absolute top-0 left-1/2 transform -translate-x-1/2 -translate-y-1/2 flex items-center">
-        {/* 拖拽手柄 */}
-        <div className={`
-          flex items-center justify-center w-6 h-6 rounded-full border-2 
-          ${getColorClasses(color)}
-          opacity-0 group-hover:opacity-100 transition-opacity duration-200
-          cursor-grab hover:cursor-grabbing
-          shadow-sm
-        `}>
+        {/* 拖拽手柄 - 始终可见 */}
+        <div 
+          className={`
+            flex items-center justify-center w-6 h-6 rounded-full border-2 
+            ${getColorClasses(color)}
+            cursor-grab hover:cursor-grabbing
+            shadow-sm
+            opacity-70 hover:opacity-100
+            transition-opacity duration-200
+          `}
+          {...(dragHandleProps || {})}
+        >
           <GripVertical className="w-3 h-3" />
         </div>
         

@@ -1,0 +1,68 @@
+/* 拖拽排序相关样式 */
+.sortable-content {
+  position: relative;
+}
+
+/* 段落高亮样式 */
+.semantic-paragraph-highlighted {
+  background-color: rgba(59, 130, 246, 0.1) !important;
+  border-left: 4px solid #3b82f6 !important;
+  transform: translateX(2px);
+  transition: all 0.2s ease-in-out;
+}
+
+/* 深色模式下的段落高亮 */
+.dark .semantic-paragraph-highlighted {
+  background-color: rgba(59, 130, 246, 0.15) !important;
+  border-left-color: #60a5fa !important;
+}
+
+/* 拖拽状态样式 */
+.sortable-content [data-dnd-dragging="true"] {
+  opacity: 0.7;
+}
+
+/* 拖拽中的段落 */
+.sortable-content .paragraph-block {
+  transition: all 0.2s ease-in-out;
+}
+
+/* 分割线拖拽样式 */
+.sortable-divider {
+  position: relative;
+}
+
+/* 分割线悬停时不做任何变化 */
+.sortable-divider:hover {
+  /* 完全去掉悬停效果 */
+}
+
+/* 拖拽预览样式 */
+.sortable-content [data-dnd-over="true"] {
+  border: 2px dashed #3b82f6;
+  border-radius: 8px;
+  background-color: rgba(59, 130, 246, 0.05);
+}
+
+.dark .sortable-content [data-dnd-over="true"] {
+  border-color: #60a5fa;
+  background-color: rgba(59, 130, 246, 0.1);
+}
+
+/* 拖拽手柄动画 */
+.sortable-content .group .absolute {
+  transition: all 0.2s ease-in-out;
+}
+
+/* 拖拽时的阴影效果 */
+.sortable-content [data-dnd-dragging="true"] {
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  z-index: 1000;
+}
+
+/* 响应式拖拽手柄 */
+@media (max-width: 768px) {
+  .sortable-content {
+    touch-action: none;
+  }
+} 

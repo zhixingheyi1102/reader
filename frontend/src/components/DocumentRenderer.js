@@ -1,10 +1,16 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState, useCallback } from 'react';
 import ReactMarkdown from 'react-markdown';
+import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
+import { SortableContext, verticalListSortingStrategy, arrayMove } from '@dnd-kit/sortable';
+import { restrictToVerticalAxis } from '@dnd-kit/modifiers';
 import LogicalDivider from './LogicalDivider';
+import SortableParagraph from './SortableParagraph';
+import SortableDivider from './SortableDivider';
+import './DocumentRenderer.css';
 
-// 独立的段落渲染函数，避免React Hook规则问题
-const renderParagraphsWithIds = (content, onContentBlockRef, nodeMapping = null) => {
-  if (!content) return null;
+// 解析段落和分割线的数据结构
+const parseContentWithDividers = (content, onContentBlockRef, nodeMapping = null) => {
+  if (!content) return [];
   
   // 创建段落ID到节点ID的映射
   const paragraphToNodeMap = {};
@@ -24,111 +30,67 @@ const renderParagraphsWithIds = (content, onContentBlockRef, nodeMapping = null)
   const paragraphs = content.split(/(\[para-\d+\])/g).filter(part => part.trim());
   console.log('📍 [段落解析] 总段落数量:', paragraphs.length, '前5个部分:', paragraphs.slice(0, 5));
   
-  const elements = [];
+  const items = [];
   let currentParagraphId = null;
   let currentContent = '';
   let currentNodeId = null;
+  
+  // 根据语义角色设置颜色
+  const getColorByRole = (role) => {
+    if (!role) return 'gray';
+    const roleColors = {
+      '引言': 'blue',
+      '核心论点': 'purple',
+      '支撑证据': 'green',
+      '反驳': 'red',
+      '结论': 'yellow',
+      '历史案例': 'blue',
+      '理论拓展': 'purple'
+    };
+    return roleColors[role] || 'gray';
+  };
   
   paragraphs.forEach((part, partIndex) => {
     const paraIdMatch = part.match(/\[para-(\d+)\]/);
     
     if (paraIdMatch) {
-      // 如果有之前的内容，先渲染它
+      // 如果有之前的内容，先处理它
       if (currentContent.trim() && currentParagraphId) {
-        console.log(`📍 [段落渲染] 渲染段落: ${currentParagraphId}, 内容长度: ${currentContent.trim().length}`);
+        console.log(`📍 [段落解析] 创建段落数据: ${currentParagraphId}, 内容长度: ${currentContent.trim().length}`);
         
-        // 🔧 固定当前段落ID，避免闭包陷阱
-        const paragraphIdToRegister = currentParagraphId;
-        const contentPreview = currentContent.substring(0, 50) + '...';
-        
-        elements.push(
-          <div 
-            key={`${currentParagraphId}-content`}
-            id={currentParagraphId}
-            data-para-id={currentParagraphId}
-            className="paragraph-block mb-3 p-2 rounded transition-all duration-200"
-            ref={(el) => {
-              console.log('📍 [段落注册-中间] 注册段落引用:', paragraphIdToRegister, '元素:', !!el, '内容预览:', contentPreview);
-              if (el) {
-                console.log('📍 [段落注册-中间-DOM] 元素DOM信息:', {
-                  id: el.id,
-                  dataParaId: el.getAttribute('data-para-id'),
-                  className: el.className,
-                  offsetTop: el.offsetTop,
-                  clientHeight: el.clientHeight
-                });
-              } else {
-                console.log('📍 [段落注册-中间-DOM] 元素为null，段落:', paragraphIdToRegister);
-              }
-              onContentBlockRef(el, paragraphIdToRegister);
-            }}
-          >
-            <ReactMarkdown
-              components={{
-                h1: ({node, ...props}) => <h1 className="text-2xl font-bold mb-3 text-gray-900 dark:text-white border-b border-gray-200 dark:border-gray-700 pb-2" {...props} />,
-                h2: ({node, ...props}) => <h2 className="text-xl font-semibold mb-2 text-gray-800 dark:text-gray-200 mt-4" {...props} />,
-                h3: ({node, ...props}) => <h3 className="text-lg font-medium mb-2 text-gray-700 dark:text-gray-300 mt-3" {...props} />,
-                h4: ({node, ...props}) => <h4 className="text-base font-medium mb-2 text-gray-700 dark:text-gray-300 mt-2" {...props} />,
-                h5: ({node, ...props}) => <h5 className="text-sm font-medium mb-2 text-gray-700 dark:text-gray-300 mt-2" {...props} />,
-                h6: ({node, ...props}) => <h6 className="text-sm font-medium mb-2 text-gray-700 dark:text-gray-300 mt-2" {...props} />,
-                p: ({node, ...props}) => <p className="mb-3 text-gray-600 dark:text-gray-300 leading-relaxed text-sm" {...props} />,
-                ul: ({node, ...props}) => <ul className="mb-3 ml-4 list-disc" {...props} />,
-                ol: ({node, ...props}) => <ol className="mb-3 ml-4 list-decimal" {...props} />,
-                li: ({node, ...props}) => <li className="mb-1 text-gray-600 dark:text-gray-300 text-sm" {...props} />,
-                blockquote: ({node, ...props}) => (
-                  <blockquote className="border-l-4 border-blue-500 dark:border-blue-400 pl-3 py-2 mb-3 bg-blue-50 dark:bg-blue-900/20 text-gray-700 dark:text-gray-300 italic text-sm" {...props} />
-                ),
-                code: ({node, inline, ...props}) => 
-                  inline 
-                    ? <code className="bg-gray-100 dark:bg-gray-700 px-1 py-0.5 rounded text-xs font-mono text-red-600 dark:text-red-400" {...props} />
-                    : <code className="block bg-gray-900 dark:bg-gray-800 text-green-400 dark:text-green-300 p-3 rounded-lg overflow-x-auto text-xs font-mono" {...props} />,
-                pre: ({node, ...props}) => <pre className="mb-3 overflow-x-auto" {...props} />,
-              }}
-            >
-              {currentContent.trim()}
-            </ReactMarkdown>
-          </div>
-        );
+        items.push({
+          id: currentParagraphId,
+          type: 'paragraph',
+          paragraphId: currentParagraphId,
+          content: currentContent.trim(),
+          nodeId: currentNodeId,
+          onContentBlockRef
+        });
       }
       
       // 设置新的段落ID
       const newParagraphId = `para-${paraIdMatch[1]}`;
       const newNodeId = paragraphToNodeMap[newParagraphId];
       
-              // 检查节点变化，如果节点发生变化且不是第一个段落，则插入分割线
-        if (nodeMapping && newNodeId && currentNodeId && newNodeId !== currentNodeId) {
-          const nodeInfo = nodeMapping[newNodeId];
-          if (nodeInfo) {
-            console.log(`📍 [逻辑分割] 检测到节点变化: ${currentNodeId} -> ${newNodeId}`);
-            
-            // 根据语义角色设置颜色
-            const getColorByRole = (role) => {
-              if (!role) return 'gray';
-              const roleColors = {
-                '引言': 'blue',
-                '核心论点': 'purple',
-                '支撑证据': 'green',
-                '反驳': 'red',
-                '结论': 'yellow',
-                '历史案例': 'blue',
-                '理论拓展': 'purple'
-              };
-              return roleColors[role] || 'gray';
-            };
-            
-            // 插入逻辑分割线
-            elements.push(
-              <LogicalDivider 
-                key={`divider-${newNodeId}`}
-                nodeInfo={{
-                  title: nodeInfo.text_snippet || nodeInfo.semantic_role || newNodeId,
-                  id: newNodeId,
-                  color: getColorByRole(nodeInfo.semantic_role)
-                }}
-              />
-            );
-          }
+      // 检查节点变化，如果节点发生变化且不是第一个段落，则插入分割线
+      if (nodeMapping && newNodeId && currentNodeId && newNodeId !== currentNodeId) {
+        const nodeInfo = nodeMapping[newNodeId];
+        if (nodeInfo) {
+          console.log(`📍 [逻辑分割] 检测到节点变化: ${currentNodeId} -> ${newNodeId}`);
+          
+          // 插入逻辑分割线
+          items.push({
+            id: `divider-${newNodeId}`,
+            type: 'divider',
+            nodeId: newNodeId,
+            nodeInfo: {
+              title: nodeInfo.text_snippet || nodeInfo.semantic_role || newNodeId,
+              id: newNodeId,
+              color: getColorByRole(nodeInfo.semantic_role)
+            }
+          });
         }
+      }
       
       currentParagraphId = newParagraphId;
       currentNodeId = newNodeId;
@@ -144,66 +106,282 @@ const renderParagraphsWithIds = (content, onContentBlockRef, nodeMapping = null)
   
   // 处理最后一个段落
   if (currentContent.trim() && currentParagraphId) {
-    console.log(`📍 [段落渲染-最后] 渲染最后段落: ${currentParagraphId}, 内容长度: ${currentContent.trim().length}`);
+    console.log(`📍 [段落解析-最后] 创建最后段落数据: ${currentParagraphId}, 内容长度: ${currentContent.trim().length}`);
     
-    // 🔧 固定当前段落ID，避免闭包陷阱
-    const finalParagraphIdToRegister = currentParagraphId;
-    const finalContentPreview = currentContent.substring(0, 50) + '...';
-    
-    elements.push(
-      <div 
-        key={`${currentParagraphId}-content`}
-        id={currentParagraphId}
-        data-para-id={currentParagraphId}
-        className="paragraph-block mb-3 p-2 rounded transition-all duration-200"
-        ref={(el) => {
-          console.log('📍 [段落注册-最后] 注册段落引用:', finalParagraphIdToRegister, '元素:', !!el, '内容预览:', finalContentPreview);
-          if (el) {
-            console.log('📍 [段落注册-最后-DOM] 元素DOM信息:', {
-              id: el.id,
-              dataParaId: el.getAttribute('data-para-id'),
-              className: el.className,
-              offsetTop: el.offsetTop,
-              clientHeight: el.clientHeight
-            });
-          } else {
-            console.log('📍 [段落注册-最后-DOM] 元素为null，段落:', finalParagraphIdToRegister);
-          }
-          onContentBlockRef(el, finalParagraphIdToRegister);
-        }}
-      >
-        <ReactMarkdown
-          components={{
-            h1: ({node, ...props}) => <h1 className="text-2xl font-bold mb-3 text-gray-900 dark:text-white border-b border-gray-200 dark:border-gray-700 pb-2" {...props} />,
-            h2: ({node, ...props}) => <h2 className="text-xl font-semibold mb-2 text-gray-800 dark:text-gray-200 mt-4" {...props} />,
-            h3: ({node, ...props}) => <h3 className="text-lg font-medium mb-2 text-gray-700 dark:text-gray-300 mt-3" {...props} />,
-            h4: ({node, ...props}) => <h4 className="text-base font-medium mb-2 text-gray-700 dark:text-gray-300 mt-2" {...props} />,
-            h5: ({node, ...props}) => <h5 className="text-sm font-medium mb-2 text-gray-700 dark:text-gray-300 mt-2" {...props} />,
-            h6: ({node, ...props}) => <h6 className="text-sm font-medium mb-2 text-gray-700 dark:text-gray-300 mt-2" {...props} />,
-            p: ({node, ...props}) => <p className="mb-3 text-gray-600 dark:text-gray-300 leading-relaxed text-sm" {...props} />,
-            ul: ({node, ...props}) => <ul className="mb-3 ml-4 list-disc" {...props} />,
-            ol: ({node, ...props}) => <ol className="mb-3 ml-4 list-decimal" {...props} />,
-            li: ({node, ...props}) => <li className="mb-1 text-gray-600 dark:text-gray-300 text-sm" {...props} />,
-            blockquote: ({node, ...props}) => (
-              <blockquote className="border-l-4 border-blue-500 dark:border-blue-400 pl-3 py-2 mb-3 bg-blue-50 dark:bg-blue-900/20 text-gray-700 dark:text-gray-300 italic text-sm" {...props} />
-            ),
-            code: ({node, inline, ...props}) => 
-              inline 
-                ? <code className="bg-gray-100 dark:bg-gray-700 px-1 py-0.5 rounded text-xs font-mono text-red-600 dark:text-red-400" {...props} />
-                : <code className="block bg-gray-900 dark:bg-gray-800 text-green-400 dark:text-green-300 p-3 rounded-lg overflow-x-auto text-xs font-mono" {...props} />,
-            pre: ({node, ...props}) => <pre className="mb-3 overflow-x-auto" {...props} />,
-          }}
-        >
-          {currentContent.trim()}
-        </ReactMarkdown>
-      </div>
-    );
-  } else {
-    console.log(`📍 [段落跳过-最后] 跳过最后段落: ${currentParagraphId}, 内容为空或无段落ID`);
+    items.push({
+      id: currentParagraphId,
+      type: 'paragraph',
+      paragraphId: currentParagraphId,
+      content: currentContent.trim(),
+      nodeId: currentNodeId,
+      onContentBlockRef
+    });
   }
   
-  console.log(`📍 [渲染总结] 总共创建了 ${elements.length} 个段落元素`);
-  return elements;
+  console.log(`📍 [解析总结] 总共创建了 ${items.length} 个项目`);
+  
+  // 健壮性检查：过滤掉可能的无效元素
+  const validItems = items.filter(item => {
+    if (!item) {
+      console.warn('📍 [解析总结] ⚠️ 发现空的 item');
+      return false;
+    }
+    if (!item.id) {
+      console.warn('📍 [解析总结] ⚠️ 发现没有 id 的 item:', item);
+      return false;
+    }
+    if (!item.type) {
+      console.warn('📍 [解析总结] ⚠️ 发现没有 type 的 item:', item);
+      return false;
+    }
+    return true;
+  });
+  
+  if (validItems.length !== items.length) {
+    console.warn(`📍 [解析总结] ⚠️ 过滤掉了 ${items.length - validItems.length} 个无效项目`);
+  }
+  
+  return validItems;
+};
+
+// 渲染段落组件
+const renderParagraphComponent = (item) => {
+  const { paragraphId, content, onContentBlockRef } = item;
+  
+  // 🔧 固定当前段落ID，避免闭包陷阱
+  const paragraphIdToRegister = paragraphId;
+  const contentPreview = content.substring(0, 50) + '...';
+  
+  return (
+    <div 
+      key={`${paragraphId}-content`}
+      id={paragraphId}
+      data-para-id={paragraphId}
+      className="paragraph-block mb-3 p-2 rounded transition-all duration-200"
+      ref={(el) => {
+        console.log('📍 [段落注册] 注册段落引用:', paragraphIdToRegister, '元素:', !!el, '内容预览:', contentPreview);
+        if (el) {
+          console.log('📍 [段落注册-DOM] 元素DOM信息:', {
+            id: el.id,
+            dataParaId: el.getAttribute('data-para-id'),
+            className: el.className,
+            offsetTop: el.offsetTop,
+            clientHeight: el.clientHeight
+          });
+        } else {
+          console.log('📍 [段落注册-DOM] 元素为null，段落:', paragraphIdToRegister);
+        }
+        onContentBlockRef(el, paragraphIdToRegister);
+      }}
+    >
+      <ReactMarkdown
+        components={{
+          h1: ({node, ...props}) => <h1 className="text-2xl font-bold mb-3 text-gray-900 dark:text-white border-b border-gray-200 dark:border-gray-700 pb-2" {...props} />,
+          h2: ({node, ...props}) => <h2 className="text-xl font-semibold mb-2 text-gray-800 dark:text-gray-200 mt-4" {...props} />,
+          h3: ({node, ...props}) => <h3 className="text-lg font-medium mb-2 text-gray-700 dark:text-gray-300 mt-3" {...props} />,
+          h4: ({node, ...props}) => <h4 className="text-base font-medium mb-2 text-gray-700 dark:text-gray-300 mt-2" {...props} />,
+          h5: ({node, ...props}) => <h5 className="text-sm font-medium mb-2 text-gray-700 dark:text-gray-300 mt-2" {...props} />,
+          h6: ({node, ...props}) => <h6 className="text-sm font-medium mb-2 text-gray-700 dark:text-gray-300 mt-2" {...props} />,
+          p: ({node, ...props}) => <p className="mb-3 text-gray-600 dark:text-gray-300 leading-relaxed text-sm" {...props} />,
+          ul: ({node, ...props}) => <ul className="mb-3 ml-4 list-disc" {...props} />,
+          ol: ({node, ...props}) => <ol className="mb-3 ml-4 list-decimal" {...props} />,
+          li: ({node, ...props}) => <li className="mb-1 text-gray-600 dark:text-gray-300 text-sm" {...props} />,
+          blockquote: ({node, ...props}) => (
+            <blockquote className="border-l-4 border-blue-500 dark:border-blue-400 pl-3 py-2 mb-3 bg-blue-50 dark:bg-blue-900/20 text-gray-700 dark:text-gray-300 italic text-sm" {...props} />
+          ),
+          code: ({node, inline, ...props}) => 
+            inline 
+              ? <code className="bg-gray-100 dark:bg-gray-700 px-1 py-0.5 rounded text-xs font-mono text-red-600 dark:text-red-400" {...props} />
+              : <code className="block bg-gray-900 dark:bg-gray-800 text-green-400 dark:text-green-300 p-3 rounded-lg overflow-x-auto text-xs font-mono" {...props} />,
+          pre: ({node, ...props}) => <pre className="mb-3 overflow-x-auto" {...props} />,
+        }}
+      >
+        {content}
+      </ReactMarkdown>
+    </div>
+  );
+};
+
+// 独立的段落渲染函数，避免React Hook规则问题（保持向后兼容）
+const renderParagraphsWithIds = (content, onContentBlockRef, nodeMapping = null) => {
+  if (!content) return null;
+  
+  // 为了向后兼容，返回解析后的项目渲染为JSX
+  const items = parseContentWithDividers(content, onContentBlockRef, nodeMapping);
+  
+  return items.map((item) => {
+    if (item.type === 'paragraph') {
+      return renderParagraphComponent(item);
+    } else if (item.type === 'divider') {
+      return (
+        <LogicalDivider 
+          key={item.id}
+          nodeInfo={item.nodeInfo}
+        />
+      );
+    }
+    return null;
+  });
+};
+
+// 可排序的内容渲染组件
+const SortableContentRenderer = ({ content, onContentBlockRef, nodeMapping = null, onNodeMappingUpdate, onOrderChange }) => {
+  const [items, setItems] = useState([]);
+  
+  // 使用 useMemo 缓存解析结果
+  const parsedItems = useMemo(() => {
+    const result = parseContentWithDividers(content, onContentBlockRef, nodeMapping);
+    // 健壮性检查：确保返回的是有效的数组，且每个元素都有 id 属性
+    if (!Array.isArray(result)) {
+      console.warn('📍 [解析内容] ⚠️ parseContentWithDividers 返回了非数组结果:', result);
+      return [];
+    }
+    
+    const validResult = result.filter(item => item && item.id);
+    if (validResult.length !== result.length) {
+      console.warn('📍 [解析内容] ⚠️ 解析结果包含无效元素，已过滤:', {
+        原始长度: result.length,
+        有效长度: validResult.length,
+        无效元素: result.filter(item => !item || !item.id)
+      });
+    }
+    
+    return validResult;
+  }, [content, onContentBlockRef, nodeMapping]);
+  
+  // 初始化 items 状态
+  React.useEffect(() => {
+    console.log('📍 [状态更新] 更新 items 状态，新长度:', parsedItems.length);
+    setItems(parsedItems);
+  }, [parsedItems]);
+  
+  // 传感器配置
+  const sensors = useSensors(
+    useSensor(PointerSensor),
+    useSensor(KeyboardSensor)
+  );
+  
+  // 拖拽结束处理函数 - 重构为只负责计算新顺序
+  const handleDragEnd = useCallback((event) => {
+    const { active, over } = event;
+    
+    // 健壮性检查：确保 active 和 over 对象及其 id 属性存在
+    if (!active || !over || !active.id || !over.id) {
+      console.warn('📍 [拖拽排序] ⚠️ 拖拽事件对象不完整:', { active, over });
+      return;
+    }
+    
+    if (active.id !== over.id) {
+      // 健壮性检查：确保 items 数组存在且不为空
+      if (!items || items.length === 0) {
+        console.warn('📍 [拖拽排序] ⚠️ items 数组为空或不存在');
+        return;
+      }
+      
+      // 健壮性检查：过滤掉可能的 null/undefined 元素，并确保每个元素都有 id 属性
+      const validItems = items.filter(item => item && item.id);
+      if (validItems.length !== items.length) {
+        console.warn('📍 [拖拽排序] ⚠️ items 数组包含无效元素，已过滤:', {
+          原始长度: items.length,
+          有效长度: validItems.length,
+          无效元素: items.filter(item => !item || !item.id)
+        });
+      }
+      
+      const oldIndex = validItems.findIndex((item) => item.id === active.id);
+      const newIndex = validItems.findIndex((item) => item.id === over.id);
+      
+      // 确保找到了有效的索引
+      if (oldIndex === -1 || newIndex === -1) {
+        console.warn('📍 [拖拽排序] ⚠️ 无法找到有效的拖拽索引:', {
+          activeId: active.id,
+          overId: over.id,
+          oldIndex,
+          newIndex,
+          validItemIds: validItems.map(item => item.id)
+        });
+        return;
+      }
+      
+      console.log('📍 [拖拽排序] 移动项目:', {
+        activeId: active.id,
+        overId: over.id,
+        oldIndex,
+        newIndex
+      });
+      
+      const newItems = arrayMove(validItems, oldIndex, newIndex);
+      console.log('📍 [拖拽排序] 计算出新的项目顺序，长度:', newItems.length);
+      
+      // 先更新本地状态，确保UI立即响应
+      setItems(newItems);
+      
+      // 调用父组件传入的回调函数，传递新的项目顺序
+      if (onOrderChange) {
+        console.log('📍 [拖拽排序] 调用 onOrderChange 回调函数');
+        onOrderChange(newItems);
+      } else {
+        console.warn('📍 [拖拽排序] ⚠️ onOrderChange 回调函数未提供');
+      }
+    }
+  }, [items, onOrderChange]);
+  
+  // 获取所有项目的ID（包括段落和分割线）
+  const sortableItemIds = useMemo(() => {
+    // 健壮性检查：确保 items 是有效数组且元素有 id 属性
+    if (!Array.isArray(items)) {
+      console.warn('📍 [sortableItemIds] ⚠️ items 不是数组:', items);
+      return [];
+    }
+    
+    const validIds = items
+      .filter(item => item && item.id)
+      .map(item => item.id);
+    
+    console.log('📍 [sortableItemIds] 生成的ID列表长度:', validIds.length);
+    return validIds;
+  }, [items]);
+  
+  return (
+    <DndContext
+      sensors={sensors}
+      collisionDetection={closestCenter}
+      onDragEnd={handleDragEnd}
+      modifiers={[restrictToVerticalAxis]}
+    >
+      <SortableContext items={sortableItemIds} strategy={verticalListSortingStrategy}>
+        <div className="sortable-content">
+          {items
+            .filter(item => item && item.id && item.type) // 过滤无效项目
+            .map((item) => {
+            if (item.type === 'paragraph') {
+              // 段落被SortableParagraph包装，但用户不能直接拖拽
+              return (
+                <SortableParagraph
+                  key={item.id}
+                  id={item.id}
+                  className="mb-4"
+                >
+                  {renderParagraphComponent(item)}
+                </SortableParagraph>
+              );
+            } else if (item.type === 'divider') {
+              // 只有分割线可拖拽
+              return (
+                <SortableDivider
+                  key={item.id}
+                  id={item.id}
+                  nodeInfo={item.nodeInfo}
+                  className="mb-4"
+                />
+              );
+            }
+            return null;
+          })}
+        </div>
+      </SortableContext>
+    </DndContext>
+  );
 };
 
 // 结构化Markdown渲染器组件
@@ -306,7 +484,7 @@ const StructuredMarkdownRenderer = ({ content, chunks, onSectionRef }) => {
 };
 
 // 演示模式渲染器组件 - 支持演示模式和真实文档
-const DemoModeRenderer = ({ content, onContentBlockRef, isRealDocument = false, chunks = [], nodeMapping = null }) => {
+const DemoModeRenderer = ({ content, onContentBlockRef, isRealDocument = false, chunks = [], nodeMapping = null, onNodeMappingUpdate, onOrderChange }) => {
   
   console.log('📄 [DemoModeRenderer] 渲染器调用参数:');
   console.log('  - content存在:', !!content);
@@ -314,6 +492,9 @@ const DemoModeRenderer = ({ content, onContentBlockRef, isRealDocument = false, 
   console.log('  - isRealDocument:', isRealDocument);
   console.log('  - chunks数量:', chunks?.length || 0);
   console.log('  - chunks详情:', chunks);
+  console.log('  - nodeMapping存在:', !!nodeMapping);
+  console.log('  - onNodeMappingUpdate存在:', !!onNodeMappingUpdate);
+  console.log('  - onOrderChange存在:', !!onOrderChange);
   
   // 检查内容是否包含段落ID标记
   const hasParaIds = content && content.includes('[para-');
@@ -330,7 +511,7 @@ const DemoModeRenderer = ({ content, onContentBlockRef, isRealDocument = false, 
     console.log('📄 [DemoModeRenderer] 段落ID数量:', paraMatches?.length || 0);
   }
   
-  // 🔧 缓存段落渲染结果，防止无限重渲染导致的ref注册问题
+  // 🔧 缓存段落渲染结果，防止无限重渲染导致的ref注册问题（保持向后兼容）
   const renderedParagraphs = useMemo(() => {
     if (content && content.includes('[para-')) {
       console.log('📄 [useMemo缓存] 重新渲染段落内容，内容长度:', content.length);
@@ -347,13 +528,19 @@ const DemoModeRenderer = ({ content, onContentBlockRef, isRealDocument = false, 
   
   console.log('📄 [useMemo缓存] 段落渲染结果缓存状态:', !!renderedParagraphs);
   
-  // 如果内容包含段落ID标记，直接渲染整个内容而不使用chunks分割
+  // 如果内容包含段落ID标记，使用可排序的内容渲染器
   if (isRealDocument && hasParaIds) {
-    console.log('📄 [DemoModeRenderer] 进入段落ID模式，使用缓存的段落内容');
+    console.log('📄 [DemoModeRenderer] 进入真实文档段落ID模式，使用可排序渲染器');
     
     return (
       <div className="prose prose-sm max-w-none">
-        {renderedParagraphs}
+        <SortableContentRenderer 
+          content={content}
+          onContentBlockRef={onContentBlockRef}
+          nodeMapping={nodeMapping}
+          onNodeMappingUpdate={onNodeMappingUpdate}
+          onOrderChange={onOrderChange}
+        />
       </div>
     );
   }
@@ -444,13 +631,19 @@ const DemoModeRenderer = ({ content, onContentBlockRef, isRealDocument = false, 
   if (content && !isRealDocument) {
     console.log('📄 [DemoModeRenderer] 进入向后兼容模式（content存在但非真实文档）');
     
-    // 如果内容包含段落ID，使用段落ID渲染逻辑
+    // 如果内容包含段落ID，使用可排序的内容渲染器
     if (content.includes('[para-')) {
-      console.log('📄 [向后兼容] 检测到段落ID，使用缓存的段落内容');
+      console.log('📄 [向后兼容] 检测到段落ID，使用可排序渲染器');
       
       return (
         <div className="prose prose-sm max-w-none">
-          {renderedParagraphs}
+          <SortableContentRenderer 
+            content={content}
+            onContentBlockRef={onContentBlockRef}
+            nodeMapping={nodeMapping}
+            onNodeMappingUpdate={onNodeMappingUpdate}
+            onOrderChange={onOrderChange}
+          />
         </div>
       );
     }
