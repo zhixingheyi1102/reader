@@ -1,0 +1,55 @@
+.editable-node {
+  width: 200px;
+  min-height: 50px;
+  padding: 10px;
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  background-color: white;
+  text-align: center;
+  cursor: pointer;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.editable-node-content {
+  font-size: 14px;
+  line-height: 1.4;
+  word-break: break-word;
+  min-height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.editable-node-textarea {
+  border: none;
+  outline: none;
+  background: transparent;
+  resize: none;
+  width: 100%;
+  font-size: 14px;
+  line-height: 1.4;
+  text-align: center;
+  font-family: inherit;
+  min-height: 40px;
+  cursor: text;
+  overflow: hidden; /* 防止出现滚动条 */
+  padding: 0;
+  margin: 0;
+  box-sizing: border-box;
+}
+
+/* 高亮显示编辑状态 */
+.editable-node:has(.editable-node-textarea:focus) {
+  border-color: #4299e1;
+  box-shadow: 0 0 0 2px rgba(66, 153, 225, 0.2);
+}
+
+/* 占位符样式 */
+.editable-node-textarea::placeholder {
+  color: #a0aec0;
+  opacity: 0.7;
+} 

@@ -15,6 +15,13 @@ import 'reactflow/dist/style.css';
 
 import { convertDataToReactFlow } from '../utils/dataConverter';
 import { getLayoutedElements } from '../utils/layoutHelper';
+import { updateNodeLabel, handleApiError } from '../utils/api';
+import EditableNode from './EditableNode';
+
+// 注册自定义节点类型
+const nodeTypes = {
+  editableNode: EditableNode,
+};
 
 /**
  * React Flow图表组件，兼容MermaidDiagram接口
@@ -38,6 +45,38 @@ const FlowDiagramInner = ({
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [documentId, setDocumentId] = useState(null);
+
+  // 标签更新的回调函数
+  const handleLabelChange = useCallback(async (nodeId, newLabel) => {
+    try {
+      console.log('🔄 [FlowDiagram] 更新节点标签:', nodeId, '->', newLabel);
+      
+      // 更新本地状态
+      setNodes((currentNodes) => 
+        currentNodes.map(node => 
+          node.id === nodeId 
+            ? { ...node, data: { ...node.data, label: newLabel } }
+            : node
+        )
+      );
+
+      // 调用后端API持久化更改
+      if (documentId) {
+        try {
+          await updateNodeLabel(documentId, nodeId, newLabel);
+          console.log('📝 [FlowDiagram] 节点标签更新成功');
+        } catch (apiError) {
+          console.error('❌ [FlowDiagram] API调用失败:', apiError);
+          // 可以选择显示用户友好的错误消息
+          // alert(handleApiError(apiError));
+        }
+      }
+    } catch (error) {
+      console.error('❌ [FlowDiagram] 更新节点标签失败:', error);
+      // 可以在这里添加错误提示
+    }
+  }, [documentId]);
 
   // 处理数据变化
   useEffect(() => {
@@ -51,6 +90,11 @@ const FlowDiagramInner = ({
       setNodes([]);
       setEdges([]);
       return;
+    }
+
+    // 从 apiData 中提取 document_id（如果有的话）
+    if (apiData && apiData.document_id) {
+      setDocumentId(apiData.document_id);
     }
 
     setIsLoading(true);
@@ -69,6 +113,16 @@ const FlowDiagramInner = ({
         return;
       }
 
+      // 为节点添加 onLabelChange 回调并设置为可编辑类型
+      const nodesWithCallback = convertedNodes.map(node => ({
+        ...node,
+        type: 'editableNode', // 设置为可编辑节点类型
+        data: {
+          ...node.data,
+          onLabelChange: handleLabelChange // 将回调函数附加到data上
+        }
+      }));
+
       // 应用自动布局
       const layoutOptionsToUse = {
         direction: layoutOptions.direction || 'TB',
@@ -80,7 +134,7 @@ const FlowDiagramInner = ({
       };
       
       const { nodes: layoutedNodes, edges: layoutedEdges } = getLayoutedElements(
-        convertedNodes, 
+        nodesWithCallback, 
         convertedEdges,
         layoutOptionsToUse
       );
@@ -98,7 +152,7 @@ const FlowDiagramInner = ({
     } finally {
       setIsLoading(false);
     }
-  }, [code, apiData, layoutOptions]);
+  }, [code, apiData, layoutOptions, handleLabelChange]);
 
   // 为节点添加高亮className - 不改变任何其他属性，只添加className
   const nodesWithHighlightClass = useMemo(() => {
@@ -220,6 +274,7 @@ const FlowDiagramInner = ({
       <ReactFlow
         nodes={nodesWithHighlightClass}
         edges={edges}
+        nodeTypes={nodeTypes}
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         onConnect={onConnect}

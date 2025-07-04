@@ -1,5 +1,9 @@
 import dagre from 'dagre';
 
+// 定义节点的默认尺寸，与CSS保持一致
+const DEFAULT_NODE_WIDTH = 200;
+const DEFAULT_NODE_HEIGHT = 50;
+
 /**
  * 使用Dagre算法计算节点布局
  * @param {Array} nodes - React Flow格式的节点数组
@@ -32,13 +36,13 @@ export const getLayoutedElements = (nodes, edges, options = {}) => {
       marginy: options.marginY || 50
     });
 
+    // 使用与CSS一致的节点尺寸
+    const nodeWidth = options.nodeWidth || DEFAULT_NODE_WIDTH;
+    const nodeHeight = options.nodeHeight || DEFAULT_NODE_HEIGHT;
+
     // 添加节点到图中
     nodes.forEach((node) => {
-      const nodeConfig = {
-        width: options.nodeWidth || 200,
-        height: options.nodeHeight || 80
-      };
-      graph.setNode(node.id, nodeConfig);
+      graph.setNode(node.id, { width: nodeWidth, height: nodeHeight });
     });
 
     // 添加边到图中
@@ -65,16 +69,16 @@ export const getLayoutedElements = (nodes, edges, options = {}) => {
       const finalPosition = {
         // dagre返回的是节点中心点坐标，需要转换为左上角坐标
         // 确保坐标是数字类型
-        x: Number(nodeWithPosition.x - (options.nodeWidth || 200) / 2),
-        y: Number(nodeWithPosition.y - (options.nodeHeight || 80) / 2)
+        x: Number(nodeWithPosition.x - nodeWidth / 2),
+        y: Number(nodeWithPosition.y - nodeHeight / 2)
       };
       
       return {
         ...node,
         position: finalPosition,
         // 确保React Flow需要的其他属性
-        width: options.nodeWidth || 200,
-        height: options.nodeHeight || 80
+        width: nodeWidth,
+        height: nodeHeight
       };
     });
 
