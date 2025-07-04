@@ -950,6 +950,52 @@ async def generate_document_structure(document_id: str):
         logger.error(f"Generate document structure error: {str(e)}")
         raise HTTPException(status_code=500, detail=f"生成文档结构失败: {str(e)}")
 
+@app.post("/api/document/{document_id}/remap")
+async def update_node_mappings(document_id: str, request_data: dict):
+    """更新文档的节点映射关系"""
+    try:
+        print(f"📍 [API] 收到节点映射更新请求 - 文档ID: {document_id}")
+        print(f"📍 [API] 新的节点映射: {request_data}")
+        
+        # 验证请求数据
+        if 'node_mappings' not in request_data:
+            return JSONResponse(
+                status_code=400,
+                content={"success": False, "message": "缺少 node_mappings 参数"}
+            )
+        
+        new_node_mappings = request_data['node_mappings']
+        
+        # 检查文档是否存在
+        if document_id not in document_status:
+            return JSONResponse(
+                status_code=404,
+                content={"success": False, "message": f"文档 {document_id} 不存在"}
+            )
+        
+        # 更新文档状态中的节点映射
+        document_status[document_id]['node_mappings_demo'] = new_node_mappings
+        
+        print(f"📍 [API] ✅ 成功更新文档 {document_id} 的节点映射")
+        print(f"📍 [API] 更新后的映射键数量: {len(new_node_mappings)}")
+        
+        # 可选：保存到持久化存储（这里可以添加数据库保存逻辑）
+        # TODO: 添加数据库持久化逻辑
+        
+        return JSONResponse(content={
+            "success": True,
+            "message": "节点映射更新成功",
+            "document_id": document_id,
+            "updated_mappings_count": len(new_node_mappings)
+        })
+        
+    except Exception as e:
+        print(f"❌ [API错误] 更新节点映射失败: {str(e)}")
+        return JSONResponse(
+            status_code=500,
+            content={"success": False, "message": f"更新节点映射失败: {str(e)}"}
+        )
+
 if __name__ == "__main__":
     import uvicorn
     
