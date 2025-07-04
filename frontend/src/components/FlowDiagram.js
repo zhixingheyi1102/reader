@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback, useImperativeHandle, forwardRef, useMemo } from 'react';
+import React, { useEffect, useState, useCallback, useImperativeHandle, forwardRef, useMemo, useRef } from 'react';
 import ReactFlow, {
   ReactFlowProvider,
   Background,
@@ -30,6 +30,7 @@ const nodeTypes = {
  * @param {Object} props.apiData - 包含mermaid_string和node_mappings的数据
  * @param {string} props.highlightedNodeId - 需要高亮的节点ID
  * @param {Function} props.onNodeClick - 节点点击回调函数
+ * @param {Function} props.onNodeLabelUpdate - 节点标签更新回调函数
  * @param {Object} props.layoutOptions - 布局选项
  * @param {string} props.className - CSS类名
  */
@@ -38,6 +39,7 @@ const FlowDiagramInner = ({
   apiData,
   highlightedNodeId,
   onNodeClick, 
+  onNodeLabelUpdate,
   layoutOptions = {}, 
   className = '',
   onReactFlowInstanceChange
@@ -47,7 +49,10 @@ const FlowDiagramInner = ({
   const [isLoading, setIsLoading] = useState(false);
   const [documentId, setDocumentId] = useState(null);
 
-  // 标签更新的回调函数
+  // 使用useRef来稳定化handleLabelChange函数，避免不必要的重新渲染
+  const handleLabelChangeRef = useRef(null);
+
+  // 标签更新的回调函数 - 使用useCallback但不包含在useEffect依赖中
   const handleLabelChange = useCallback(async (nodeId, newLabel) => {
     try {
       console.log('🔄 [FlowDiagram] 更新节点标签:', nodeId, '->', newLabel);
@@ -60,6 +65,12 @@ const FlowDiagramInner = ({
             : node
         )
       );
+
+      // 调用父组件的节点标签更新回调（优先级高）
+      if (onNodeLabelUpdate) {
+        console.log('🔄 [FlowDiagram] 调用父组件节点标签更新回调');
+        onNodeLabelUpdate(nodeId, newLabel);
+      }
 
       // 调用后端API持久化更改
       if (documentId) {
@@ -76,9 +87,14 @@ const FlowDiagramInner = ({
       console.error('❌ [FlowDiagram] 更新节点标签失败:', error);
       // 可以在这里添加错误提示
     }
-  }, [documentId]);
+  }, [documentId, setNodes, onNodeLabelUpdate]); // 🔑 添加onNodeLabelUpdate到依赖中
 
-  // 处理数据变化
+  // 将handleLabelChange存储到ref中，保持引用稳定
+  useEffect(() => {
+    handleLabelChangeRef.current = handleLabelChange;
+  }, [handleLabelChange]);
+
+  // 处理数据变化 - 移除handleLabelChange依赖，使用ref来避免重新渲染
   useEffect(() => {
     // 优先使用apiData，否则使用code进行向后兼容
     const dataToProcess = apiData || (code ? {
@@ -114,12 +130,13 @@ const FlowDiagramInner = ({
       }
 
       // 为节点添加 onLabelChange 回调并设置为可编辑类型
+      // 使用ref中的函数避免重新创建
       const nodesWithCallback = convertedNodes.map(node => ({
         ...node,
         type: 'editableNode', // 设置为可编辑节点类型
         data: {
           ...node.data,
-          onLabelChange: handleLabelChange // 将回调函数附加到data上
+          onLabelChange: (...args) => handleLabelChangeRef.current?.(...args) // 使用ref中的函数
         }
       }));
 
@@ -152,24 +169,133 @@ const FlowDiagramInner = ({
     } finally {
       setIsLoading(false);
     }
-  }, [code, apiData, layoutOptions, handleLabelChange]);
+  }, [code, apiData, layoutOptions]); // 移除handleLabelChange依赖
 
-  // 为节点添加高亮className - 不改变任何其他属性，只添加className
-  const nodesWithHighlightClass = useMemo(() => {
-    if (nodes.length === 0) return [];
-
-    return nodes.map((node) => {
-      const isHighlighted = node.id === highlightedNodeId;
-      
-      return {
-        ...node,
-        // 添加或移除高亮className，保持其他所有属性不变
-        className: isHighlighted 
-          ? (node.className ? `${node.className} highlighted-node` : 'highlighted-node')
-          : (node.className ? node.className.replace(/\s*highlighted-node\s*/g, '').trim() : undefined)
-      };
+  // 非破坏性高亮实现 - 直接操作DOM而不修改节点对象
+  const applyNodeHighlighting = useCallback((nodeIdToHighlight) => {
+    console.log('🎯 [非破坏性高亮] 开始应用节点高亮:', nodeIdToHighlight);
+    
+    // 移除所有现有高亮
+    const allNodes = document.querySelectorAll('.react-flow__node');
+    allNodes.forEach(nodeElement => {
+      nodeElement.classList.remove('highlighted-node');
     });
-  }, [nodes, highlightedNodeId]);
+    
+    // 如果有指定的节点ID，添加高亮
+    if (nodeIdToHighlight) {
+      console.log('🎯 [非破坏性高亮] 查找节点ID:', nodeIdToHighlight);
+      
+      // 多种选择器策略，提高找到节点的成功率
+      const selectors = [
+        `[data-id="${nodeIdToHighlight}"]`,
+        `.react-flow__node[data-id="${nodeIdToHighlight}"]`,
+        `#node-${nodeIdToHighlight}`,
+        `.react-flow__node:has([data-id="${nodeIdToHighlight}"])`,
+      ];
+      
+      let foundNode = null;
+      
+      // 尝试各种选择器
+      for (const selector of selectors) {
+        try {
+          foundNode = document.querySelector(selector);
+          if (foundNode) {
+            console.log('🎯 [非破坏性高亮] 使用选择器成功找到节点:', selector);
+            break;
+          }
+        } catch (error) {
+          console.warn('🎯 [非破坏性高亮] 选择器出错:', selector, error);
+        }
+      }
+      
+      // 如果直接选择器没找到，尝试遍历所有React Flow节点
+      if (!foundNode) {
+        console.log('🎯 [非破坏性高亮] 直接选择器未找到，开始遍历所有节点');
+        const allReactFlowNodes = document.querySelectorAll('.react-flow__node');
+        console.log('🎯 [调试] 当前页面中的React Flow节点数量:', allReactFlowNodes.length);
+        
+        allReactFlowNodes.forEach((nodeEl, index) => {
+          // 检查节点的data-id属性
+          const dataId = nodeEl.getAttribute('data-id');
+          console.log(`🎯 [调试] 节点 ${index}: data-id="${dataId}"`);
+          
+          if (dataId === nodeIdToHighlight) {
+            foundNode = nodeEl;
+            console.log('🎯 [非破坏性高亮] 通过遍历找到匹配节点:', nodeIdToHighlight);
+            return;
+          }
+          
+          // 检查子元素中是否有匹配的data-id
+          const childWithDataId = nodeEl.querySelector(`[data-id="${nodeIdToHighlight}"]`);
+          if (childWithDataId) {
+            foundNode = nodeEl;
+            console.log('🎯 [非破坏性高亮] 通过子元素找到匹配节点:', nodeIdToHighlight);
+            return;
+          }
+          
+          // 检查EditableNode组件的data属性
+          const editableNode = nodeEl.querySelector('.editable-node');
+          if (editableNode) {
+            const nodeData = editableNode.getAttribute('data-node-id') || 
+                           editableNode.parentElement?.getAttribute('data-id');
+            if (nodeData === nodeIdToHighlight) {
+              foundNode = nodeEl;
+              console.log('🎯 [非破坏性高亮] 通过EditableNode找到匹配节点:', nodeIdToHighlight);
+              return;
+            }
+          }
+        });
+      }
+      
+      // 应用高亮
+      if (foundNode) {
+        foundNode.classList.add('highlighted-node');
+        console.log('🎯 [非破坏性高亮] ✅ 成功高亮节点:', nodeIdToHighlight);
+        
+        // 确保高亮的节点在视口中可见（可选）
+        const nodeRect = foundNode.getBoundingClientRect();
+        const viewportHeight = window.innerHeight;
+        const viewportWidth = window.innerWidth;
+        
+        const isVisible = nodeRect.top >= 0 && 
+                         nodeRect.left >= 0 && 
+                         nodeRect.bottom <= viewportHeight && 
+                         nodeRect.right <= viewportWidth;
+        
+        if (!isVisible) {
+          console.log('🎯 [非破坏性高亮] 节点不在视口中，滚动到可见位置');
+          foundNode.scrollIntoView({ 
+            behavior: 'smooth', 
+            block: 'center',
+            inline: 'center'
+          });
+        }
+      } else {
+        console.warn('🎯 [非破坏性高亮] ❌ 未找到节点元素:', nodeIdToHighlight);
+        
+        // 输出调试信息
+        const allNodes = document.querySelectorAll('.react-flow__node');
+        const nodeIds = Array.from(allNodes).map(node => ({
+          dataId: node.getAttribute('data-id'),
+          id: node.id,
+          className: node.className
+        }));
+        console.log('🎯 [调试] 页面中所有节点的信息:', nodeIds);
+      }
+    } else {
+      console.log('🎯 [非破坏性高亮] 清除所有高亮（nodeIdToHighlight为空）');
+    }
+  }, []);
+
+  // 监听高亮节点变化，使用非破坏性方式应用高亮
+  useEffect(() => {
+    if (nodes.length > 0) {
+      // 延迟执行，确保DOM已经更新
+      setTimeout(() => {
+        applyNodeHighlighting(highlightedNodeId);
+      }, 100);
+    }
+  }, [highlightedNodeId, nodes.length, applyNodeHighlighting]);
 
   // 从Mermaid代码中提取节点映射
   const extractNodeMappingsFromMermaid = (mermaidCode) => {
@@ -270,68 +396,45 @@ const FlowDiagramInner = ({
   };
 
   return (
-    <div className={`flow-diagram ${className}`} style={{ width: '100%', height: '100%' }}>
-      <ReactFlow
-        nodes={nodesWithHighlightClass}
-        edges={edges}
-        nodeTypes={nodeTypes}
-        onNodesChange={onNodesChange}
-        onEdgesChange={onEdgesChange}
-        onConnect={onConnect}
-        onNodeClick={onNodeClickHandler}
-        onInit={onInit}
-        connectionLineType={ConnectionLineType.SmoothStep}
-        fitView={false}
-        nodesDraggable={true}
-        nodesConnectable={false}
-        elementsSelectable={true}
-        defaultNodeOptions={nodeDefaults}
-        proOptions={{ hideAttribution: true }}
-        preventScrolling={false}
-        snapToGrid={false}
-        snapGrid={[15, 15]}
-        defaultViewport={{ x: 0, y: 0, zoom: 1 }}
-        minZoom={0.2}
-        maxZoom={4}
-      >
-        <Background variant="dots" gap={20} size={1} />
-        <Controls />
-        <MiniMap 
-          nodeStrokeColor="#1a192b"
-          nodeColor="#ffffff"
-          nodeBorderRadius={8}
-          maskColor="rgba(0, 0, 0, 0.1)"
-          position="top-right"
-        />
-        
-        {isLoading && (
-          <Panel position="top-center">
-            <div style={{ 
-              background: 'white', 
-              padding: '10px 20px', 
-              borderRadius: '8px',
-              boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
-            }}>
-              正在处理图表数据...
-            </div>
-          </Panel>
-        )}
-        
-        {nodesWithHighlightClass.length === 0 && !isLoading && (
-          <Panel position="center">
-            <div style={{ 
-              background: 'white', 
-              padding: '20px', 
-              borderRadius: '8px',
-              boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
-              textAlign: 'center',
-              color: '#666'
-            }}>
-              暂无图表数据
-            </div>
-          </Panel>
-        )}
-      </ReactFlow>
+    <div className={`w-full h-full ${className}`}>
+      {isLoading ? (
+        <div className="flex items-center justify-center h-full">
+          <div className="text-center">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto mb-2"></div>
+            <p className="text-sm text-gray-500">正在加载流程图...</p>
+          </div>
+        </div>
+      ) : (
+        <ReactFlow
+          nodes={nodes}  // 直接使用原始节点，不再通过nodesWithHighlightClass处理
+          edges={edges}
+          onNodesChange={onNodesChange}
+          onEdgesChange={onEdgesChange}
+          onConnect={onConnect}
+          onNodeClick={onNodeClickHandler}
+          nodeTypes={nodeTypes}
+          connectionLineType={ConnectionLineType.SmoothStep}
+          fitView
+          fitViewOptions={{
+            padding: 0.1,
+            includeHiddenNodes: false,
+          }}
+          onInit={(instance) => {
+            console.log('🔄 [FlowDiagram] ReactFlow实例初始化完成');
+            if (onReactFlowInstanceChange) {
+              onReactFlowInstanceChange(instance);
+            }
+          }}
+        >
+          <Background variant="dots" gap={20} size={1} />
+          <Controls />
+          <MiniMap 
+            nodeStrokeColor="#374151" 
+            nodeColor="#f3f4f6" 
+            nodeBorderRadius={8}
+          />
+        </ReactFlow>
+      )}
     </div>
   );
 };
@@ -341,6 +444,7 @@ const FlowDiagram = forwardRef(({
   apiData, 
   highlightedNodeId, 
   onNodeClick, 
+  onNodeLabelUpdate,
   layoutOptions = {}, 
   className = '' 
 }, ref) => {
@@ -411,6 +515,7 @@ const FlowDiagram = forwardRef(({
           apiData={apiData}
           highlightedNodeId={highlightedNodeId}
           onNodeClick={onNodeClick}
+          onNodeLabelUpdate={onNodeLabelUpdate}
           layoutOptions={layoutOptions}
           className={className}
           onReactFlowInstanceChange={handleReactFlowInstanceChange}

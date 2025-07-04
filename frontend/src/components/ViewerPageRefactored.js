@@ -1,5 +1,5 @@
 import React, { useState, useRef, useCallback, useEffect, useMemo } from 'react';
-import { useNavigate, useLocation } from 'react-router-dom';
+import { useNavigate, useLocation, useParams } from 'react-router-dom';
 import { ArrowLeft, Download, Eye, EyeOff, FileText, File, Bot } from 'lucide-react';
 import axios from 'axios';
 import { toast, ToastContainer } from 'react-toastify';
@@ -34,7 +34,7 @@ const ViewerPageRefactored = () => {
     document,
     setDocument,
     loading,
-    error,
+    error: documentError,
     viewMode,
     setViewMode,
     isPdfFile,
@@ -62,8 +62,6 @@ const ViewerPageRefactored = () => {
     isDragging,
     handleMouseDown
   } = usePanelResize();
-
-
 
   // 使用滚动检测 hook
   const {
@@ -113,6 +111,35 @@ const ViewerPageRefactored = () => {
     // 高亮将由自动滚动检测来处理
     scrollToContentBlock(nodeId);
   }, [scrollToContentBlock]);
+
+  // 🔑 新增：处理节点标签更新的回调函数
+  const handleNodeLabelUpdate = useCallback((nodeId, newLabel) => {
+    console.log('📝 [节点标签更新] 同步更新document状态:', nodeId, '->', newLabel);
+    
+    // 同步更新document.node_mappings_demo中的对应节点标签
+    setDocument(prevDoc => {
+      if (!prevDoc || !prevDoc.node_mappings_demo) {
+        console.warn('📝 [节点标签更新] document或node_mappings_demo不存在，跳过更新');
+        return prevDoc;
+      }
+      
+      const newNodeMappings = { ...prevDoc.node_mappings_demo };
+      if (newNodeMappings[nodeId]) {
+        newNodeMappings[nodeId] = { 
+          ...newNodeMappings[nodeId], 
+          text_snippet: newLabel 
+        };
+        console.log('📝 [节点标签更新] ✅ document状态已同步更新');
+      } else {
+        console.warn('📝 [节点标签更新] 节点ID在node_mappings中不存在:', nodeId);
+      }
+      
+      return { 
+        ...prevDoc, 
+        node_mappings_demo: newNodeMappings 
+      };
+    });
+  }, [setDocument]);
 
   // 文档查看区域切换按钮
   const ViewModeToggle = () => {
@@ -175,9 +202,13 @@ const ViewerPageRefactored = () => {
     }
   }, [document, documentId, loadDocumentStructure, chunksLoaded]);
 
+  // 🔑 新增：防止动态映射重复执行的标志
+  const mappingInitialized = useRef(false);
+
   // 在文档、chunks和思维导图都加载完成后，创建动态映射
   useEffect(() => {
-    if (!documentId.startsWith('demo-') && document && document.content && chunksLoaded) {
+    // 🔑 只有在所有条件满足，并且映射尚未初始化时，才执行
+    if (!documentId.startsWith('demo-') && document && document.content && chunksLoaded && !mappingInitialized.current) {
       const mermaidCode = document.mermaid_code_demo;
       const nodeMapping = document.node_mappings_demo;
       
@@ -186,6 +217,7 @@ const ViewerPageRefactored = () => {
       console.log('🔗 [主组件动态映射] document存在:', !!document);
       console.log('🔗 [主组件动态映射] document.content存在:', !!document?.content);
       console.log('🔗 [主组件动态映射] chunksLoaded:', chunksLoaded);
+      console.log('🔗 [主组件动态映射] mappingInitialized.current:', mappingInitialized.current);
       console.log('🔗 [主组件动态映射] contentChunks.current数量:', contentChunks.current?.length || 0);
       console.log('🔗 [主组件动态映射] mermaidCode存在:', !!mermaidCode);
       console.log('🔗 [主组件动态映射] mermaidCode长度:', mermaidCode?.length || 0);
@@ -195,7 +227,7 @@ const ViewerPageRefactored = () => {
       console.log('🔗 [主组件动态映射] nodeMapping键数量:', nodeMapping ? Object.keys(nodeMapping).length : 0);
       
       if (mermaidCode && contentChunks.current.length > 0) {
-        console.log('🔗 [主组件] ✅ 准备创建动态映射');
+        console.log('🔗 [主组件] 🚀 正在进行首次动态映射创建...');
         console.log('🔗 [主组件] 参数检查 - chunks数量:', contentChunks.current.length);
         console.log('🔗 [主组件] 参数检查 - mermaidCode前100字符:', mermaidCode.substring(0, 100));
         console.log('🔗 [主组件] 参数检查 - nodeMapping详情:', JSON.stringify(nodeMapping, null, 2));
@@ -204,6 +236,10 @@ const ViewerPageRefactored = () => {
         console.log('🔗 [主组件] 📞 正在调用updateDynamicMapping...');
         updateDynamicMapping(contentChunks.current, mermaidCode, nodeMapping);
         console.log('🔗 [主组件] ✅ updateDynamicMapping调用完成');
+        
+        // 🔑 关键：标记为已初始化，防止重复执行
+        mappingInitialized.current = true;
+        console.log('🔗 [主组件] 🔒 映射已标记为初始化完成，防止重复执行');
       } else {
         console.log('🔗 [主组件] ❌ 动态映射创建条件不满足:');
         if (!mermaidCode) {
@@ -219,6 +255,7 @@ const ViewerPageRefactored = () => {
       console.log('🔗 [主组件动态映射] - 是否demo模式:', documentId.startsWith('demo-'));
       console.log('🔗 [主组件动态映射] - document存在:', !!document);
       console.log('🔗 [主组件动态映射] - chunksLoaded:', chunksLoaded);
+      console.log('🔗 [主组件动态映射] - mappingInitialized.current:', mappingInitialized.current);
     }
   }, [document, chunksLoaded, updateDynamicMapping, documentId]);
 
@@ -465,13 +502,13 @@ const ViewerPageRefactored = () => {
   }
 
   // 错误状态
-  if (error) {
+  if (documentError) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-gray-900">
         <div className="text-center max-w-md">
           <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-700 rounded-lg p-6">
             <h2 className="text-xl font-semibold text-red-800 dark:text-red-200 mb-2">加载失败</h2>
-            <p className="text-red-600 dark:text-red-400 mb-4">{error}</p>
+            <p className="text-red-600 dark:text-red-400 mb-4">{documentError}</p>
             <div className="space-x-3">
               <button
                 onClick={loadDocument}
@@ -756,6 +793,7 @@ const ViewerPageRefactored = () => {
                     }}
                     highlightedNodeId={highlightedNodeId}
                     onNodeClick={handleNodeClick}
+                    onNodeLabelUpdate={handleNodeLabelUpdate}
                   />
                 </div>
               ) : (

@@ -12,6 +12,7 @@
   display: flex;
   flex-direction: column;
   justify-content: center;
+  transition: all 0.3s ease; /* 添加过渡动画 */
 }
 
 .editable-node-content {
@@ -52,4 +53,38 @@
 .editable-node-textarea::placeholder {
   color: #a0aec0;
   opacity: 0.7;
+}
+
+/* 节点高亮样式 - 非破坏性高亮 */
+.react-flow__node.highlighted-node .editable-node {
+  border-color: #f59e0b !important;
+  background-color: rgba(245, 158, 11, 0.1) !important;
+  box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.2), 0 4px 12px rgba(245, 158, 11, 0.3) !important;
+  transform: scale(1.02);
+}
+
+/* 深色模式下的节点高亮 */
+:root.dark .react-flow__node.highlighted-node .editable-node {
+  border-color: #fbbf24 !important;
+  background-color: rgba(251, 191, 36, 0.15) !important;
+  box-shadow: 0 0 0 3px rgba(251, 191, 36, 0.25), 0 4px 12px rgba(251, 191, 36, 0.35) !important;
+}
+
+/* 确保编辑状态下的节点高亮不会影响编辑功能 */
+.react-flow__node.highlighted-node .editable-node:has(.editable-node-textarea:focus) {
+  border-color: #4299e1 !important;
+  box-shadow: 0 0 0 2px rgba(66, 153, 225, 0.2) !important;
+  background-color: white !important;
+  transform: scale(1);
+}
+
+/* React Flow节点容器的高亮样式 */
+.react-flow__node.highlighted-node {
+  z-index: 1000 !important;
+}
+
+/* 防止高亮动画影响编辑功能 */
+.react-flow__node .editable-node-textarea:focus {
+  position: relative;
+  z-index: 1001;
 } 

@@ -4,20 +4,51 @@ import './EditableNode.css'; // 引入CSS文件
 
 const EditableNode = ({ data, id }) => {
   const [isEditing, setIsEditing] = useState(false);
+  const [editingContent, setEditingContent] = useState(''); // 保存编辑中的内容
   const textareaRef = useRef(null);
+  const wasEditingRef = useRef(false); // 跟踪之前是否在编辑状态
+
+  // 保护编辑状态：当组件重新渲染时，检查是否需要恢复编辑状态
+  useEffect(() => {
+    // 如果之前在编辑但现在不在编辑，可能是被意外重置了
+    if (wasEditingRef.current && !isEditing && editingContent) {
+      console.log('🛡️ [编辑保护] 检测到编辑状态可能被重置，尝试恢复:', id);
+      setIsEditing(true);
+      // 延迟恢复焦点，确保DOM已更新
+      setTimeout(() => {
+        if (textareaRef.current) {
+          textareaRef.current.focus();
+          textareaRef.current.value = editingContent;
+          adjustTextareaHeight(textareaRef.current);
+          console.log('🛡️ [编辑保护] 编辑状态已恢复:', id);
+        }
+      }, 0);
+    }
+    
+    // 更新编辑状态跟踪
+    wasEditingRef.current = isEditing;
+  }, [isEditing, editingContent, id]);
 
   // 处理双击事件，进入编辑模式
   const handleDoubleClick = () => {
+    console.log('📝 [编辑开始] 节点进入编辑模式:', id);
+    setEditingContent(data.label || '');
     setIsEditing(true);
   };
 
   // 处理失焦事件，保存并退出编辑模式
   const handleBlur = (event) => {
     const newLabel = event.target.value.trim();
+    console.log('📝 [编辑结束] 节点编辑完成:', id, '新内容:', newLabel);
+    
     if (newLabel !== data.label && data.onLabelChange) {
       data.onLabelChange(id, newLabel);
     }
+    
+    // 清理编辑状态
+    setEditingContent('');
     setIsEditing(false);
+    wasEditingRef.current = false;
   };
 
   // 处理键盘事件
@@ -25,19 +56,31 @@ const EditableNode = ({ data, id }) => {
     if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault();
       const newLabel = event.target.value.trim();
+      console.log('📝 [编辑完成-回车] 节点编辑完成:', id, '新内容:', newLabel);
+      
       if (newLabel !== data.label && data.onLabelChange) {
         data.onLabelChange(id, newLabel);
       }
+      
+      // 清理编辑状态
+      setEditingContent('');
       setIsEditing(false);
+      wasEditingRef.current = false;
     }
     // 按 Escape 键取消编辑
     if (event.key === 'Escape') {
+      console.log('📝 [编辑取消] 用户取消编辑:', id);
+      // 清理编辑状态
+      setEditingContent('');
       setIsEditing(false);
+      wasEditingRef.current = false;
     }
   };
 
-  // 处理输入事件，自动调整高度
+  // 处理输入事件，保存编辑内容并自动调整高度
   const handleInput = (event) => {
+    const currentContent = event.target.value;
+    setEditingContent(currentContent); // 实时保存编辑内容
     adjustTextareaHeight(event.target);
   };
 
@@ -64,7 +107,7 @@ const EditableNode = ({ data, id }) => {
   }, [isEditing]);
 
   return (
-    <div className="editable-node">
+    <div className="editable-node" data-node-id={id}>
       {/* 添加一个用于接收连线的Handle在顶部 */}
       <Handle 
         type="target" 
@@ -83,7 +126,7 @@ const EditableNode = ({ data, id }) => {
       ) : (
         <textarea
           ref={textareaRef}
-          defaultValue={data.label || ''}
+          defaultValue={editingContent || data.label || ''}
           autoFocus
           onBlur={handleBlur}
           onKeyDown={handleKeyDown}
