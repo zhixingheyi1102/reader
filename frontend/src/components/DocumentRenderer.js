@@ -1,9 +1,24 @@
 import React, { useMemo } from 'react';
 import ReactMarkdown from 'react-markdown';
+import LogicalDivider from './LogicalDivider';
 
 // 独立的段落渲染函数，避免React Hook规则问题
-const renderParagraphsWithIds = (content, onContentBlockRef) => {
+const renderParagraphsWithIds = (content, onContentBlockRef, nodeMapping = null) => {
   if (!content) return null;
+  
+  // 创建段落ID到节点ID的映射
+  const paragraphToNodeMap = {};
+  if (nodeMapping) {
+    Object.entries(nodeMapping).forEach(([nodeId, nodeData]) => {
+      if (nodeData.paragraph_ids && Array.isArray(nodeData.paragraph_ids)) {
+        nodeData.paragraph_ids.forEach(paragraphId => {
+          paragraphToNodeMap[paragraphId] = nodeId;
+        });
+      }
+    });
+  }
+  
+  console.log('📍 [逻辑分割] 段落到节点的映射:', paragraphToNodeMap);
   
   // 按段落分割内容，保留段落ID标记
   const paragraphs = content.split(/(\[para-\d+\])/g).filter(part => part.trim());
@@ -12,6 +27,7 @@ const renderParagraphsWithIds = (content, onContentBlockRef) => {
   const elements = [];
   let currentParagraphId = null;
   let currentContent = '';
+  let currentNodeId = null;
   
   paragraphs.forEach((part, partIndex) => {
     const paraIdMatch = part.match(/\[para-(\d+)\]/);
@@ -76,10 +92,49 @@ const renderParagraphsWithIds = (content, onContentBlockRef) => {
       }
       
       // 设置新的段落ID
-      currentParagraphId = `para-${paraIdMatch[1]}`;
+      const newParagraphId = `para-${paraIdMatch[1]}`;
+      const newNodeId = paragraphToNodeMap[newParagraphId];
+      
+              // 检查节点变化，如果节点发生变化且不是第一个段落，则插入分割线
+        if (nodeMapping && newNodeId && currentNodeId && newNodeId !== currentNodeId) {
+          const nodeInfo = nodeMapping[newNodeId];
+          if (nodeInfo) {
+            console.log(`📍 [逻辑分割] 检测到节点变化: ${currentNodeId} -> ${newNodeId}`);
+            
+            // 根据语义角色设置颜色
+            const getColorByRole = (role) => {
+              if (!role) return 'gray';
+              const roleColors = {
+                '引言': 'blue',
+                '核心论点': 'purple',
+                '支撑证据': 'green',
+                '反驳': 'red',
+                '结论': 'yellow',
+                '历史案例': 'blue',
+                '理论拓展': 'purple'
+              };
+              return roleColors[role] || 'gray';
+            };
+            
+            // 插入逻辑分割线
+            elements.push(
+              <LogicalDivider 
+                key={`divider-${newNodeId}`}
+                nodeInfo={{
+                  title: nodeInfo.text_snippet || nodeInfo.semantic_role || newNodeId,
+                  id: newNodeId,
+                  color: getColorByRole(nodeInfo.semantic_role)
+                }}
+              />
+            );
+          }
+        }
+      
+      currentParagraphId = newParagraphId;
+      currentNodeId = newNodeId;
       currentContent = '';
       
-      console.log(`📍 [段落解析] 发现段落标记: ${currentParagraphId}`);
+      console.log(`📍 [段落解析] 发现段落标记: ${currentParagraphId}, 节点ID: ${currentNodeId}`);
     } else {
       // 累积内容
       currentContent += part;
@@ -251,7 +306,7 @@ const StructuredMarkdownRenderer = ({ content, chunks, onSectionRef }) => {
 };
 
 // 演示模式渲染器组件 - 支持演示模式和真实文档
-const DemoModeRenderer = ({ content, onContentBlockRef, isRealDocument = false, chunks = [] }) => {
+const DemoModeRenderer = ({ content, onContentBlockRef, isRealDocument = false, chunks = [], nodeMapping = null }) => {
   
   console.log('📄 [DemoModeRenderer] 渲染器调用参数:');
   console.log('  - content存在:', !!content);
@@ -279,7 +334,7 @@ const DemoModeRenderer = ({ content, onContentBlockRef, isRealDocument = false, 
   const renderedParagraphs = useMemo(() => {
     if (content && content.includes('[para-')) {
       console.log('📄 [useMemo缓存] 重新渲染段落内容，内容长度:', content.length);
-      const result = renderParagraphsWithIds(content, onContentBlockRef);
+      const result = renderParagraphsWithIds(content, onContentBlockRef, nodeMapping);
       console.log('📄 [useMemo缓存] 段落渲染完成，创建的元素数量:', result?.length || 0);
       if (result && result.length > 0) {
         console.log('📄 [useMemo缓存] 第一个元素key:', result[0]?.key);
@@ -288,7 +343,7 @@ const DemoModeRenderer = ({ content, onContentBlockRef, isRealDocument = false, 
       return result;
     }
     return null;
-  }, [content, onContentBlockRef]);
+  }, [content, onContentBlockRef, nodeMapping]);
   
   console.log('📄 [useMemo缓存] 段落渲染结果缓存状态:', !!renderedParagraphs);
   

@@ -168,40 +168,122 @@ export const useScrollDetection = (containerRef, documentId, currentMindmapMode,
         if (nodeId) {
           console.log('🎯 [节点高亮] 查找当前节点:', nodeId);
           
-          // 多种选择器尝试
+          // 增强选择器 - 处理更多可能的节点格式
           const selectors = [
+            // 直接匹配data-id属性
             `[data-id="${nodeId}"]`,
+            // 直接匹配id属性
             `#${nodeId}`,
+            // 匹配class中包含节点ID的
             `.node-${nodeId}`,
+            // 匹配id属性中包含节点ID的（部分匹配）
             `[id*="${nodeId}"]`,
-            `[class*="${nodeId}"]`
+            // 匹配class属性中包含节点ID的（部分匹配）
+            `[class*="${nodeId}"]`,
+            // 特殊处理：flowchart前缀格式
+            `[id*="flowchart-${nodeId}-"]`,
+            `[data-id*="flowchart-${nodeId}"]`,
+            // 特殊处理：直接匹配包含nodeId的元素
+            `*[id="${nodeId}"]`,
+            `*[data-id="${nodeId}"]`,
+            // 匹配SVG g元素（Mermaid常用格式）
+            `g[data-id="${nodeId}"]`,
+            `g[id*="${nodeId}"]`,
+            // 处理可能的转义问题（特别是数字后缀）
+            `[data-id="${nodeId.replace(/[^a-zA-Z0-9]/g, '\\$&')}"]`,
+            // CSS选择器转义数字和特殊字符
+            `[data-id="${CSS.escape ? CSS.escape(nodeId) : nodeId}"]`,
+            // 更宽泛的匹配 - 匹配结尾包含nodeId的
+            `[data-id$="${nodeId}"]`,
+            `[id$="${nodeId}"]`
           ];
           
+          console.log('🎯 [节点搜索] 尝试的选择器列表:', selectors);
+          
           let foundCurrent = false;
-          selectors.forEach(selector => {
-            const currentNodes = window.document.querySelectorAll(selector);
-            if (currentNodes.length > 0) {
-              foundCurrent = true;
-              console.log('🎯 [节点高亮] 找到当前节点:', selector, currentNodes.length);
-              currentNodes.forEach(node => {
-                if (node && node.classList) {
-                  node.classList.add('mermaid-highlighted-node');
-                  console.log('🎯 [节点高亮] 成功高亮节点:', node);
-                }
-              });
+          let foundElements = [];
+          
+          selectors.forEach((selector, index) => {
+            try {
+              const currentNodes = window.document.querySelectorAll(selector);
+              if (currentNodes.length > 0) {
+                foundCurrent = true;
+                foundElements.push(...currentNodes);
+                console.log(`🎯 [节点高亮] 选择器 ${index + 1} 成功匹配: ${selector} (找到 ${currentNodes.length} 个元素)`);
+                currentNodes.forEach((node, nodeIndex) => {
+                  if (node && node.classList) {
+                    node.classList.add('mermaid-highlighted-node');
+                    console.log(`🎯 [节点高亮] 成功高亮节点 ${nodeIndex + 1}:`, {
+                      tagName: node.tagName,
+                      id: node.id,
+                      dataId: node.getAttribute('data-id'),
+                      className: node.className,
+                      selector: selector
+                    });
+                  }
+                });
+              } else {
+                console.log(`🎯 [节点搜索] 选择器 ${index + 1} 无匹配: ${selector}`);
+              }
+            } catch (error) {
+              console.warn(`🎯 [节点搜索] 选择器 ${index + 1} 执行出错: ${selector}`, error);
             }
           });
           
           if (!foundCurrent) {
-            console.warn('🎯 [节点高亮] 未找到当前节点:', nodeId);
-            // 输出所有可能的节点信息
-            const allMermaidElements = window.document.querySelectorAll('[class*="node"], [data-id], [id]');
-            console.log('🎯 [节点高亮] 页面中所有可能的节点:', Array.from(allMermaidElements).map(el => ({
-              id: el.id,
-              dataId: el.getAttribute('data-id'),
-              className: el.className,
-              tagName: el.tagName
-            })));
+            console.warn('🎯 [节点高亮] 所有选择器都未找到节点:', nodeId);
+            
+            // 输出详细的调试信息
+            console.log('🔍 [调试分析] 开始分析页面中的所有可能节点...');
+            
+            // 查找所有Mermaid相关元素
+            const allMermaidElements = window.document.querySelectorAll('[class*="node"], [data-id], [id], g, .mermaid *');
+            console.log('🔍 [调试分析] 页面中所有可能的Mermaid元素数量:', allMermaidElements.length);
+            
+            // 筛选出可能与目标节点相关的元素
+            const relevantElements = Array.from(allMermaidElements).filter(el => {
+              const id = el.id || '';
+              const dataId = el.getAttribute('data-id') || '';
+              const className = el.className || '';
+              
+              return id.includes(nodeId) || 
+                     dataId.includes(nodeId) || 
+                     className.includes(nodeId) ||
+                     // 检查是否包含节点ID的任何部分
+                     (nodeId.length > 1 && (id.includes(nodeId.substring(0, nodeId.length-1)) || 
+                                           dataId.includes(nodeId.substring(0, nodeId.length-1))));
+            });
+            
+            console.log(`🔍 [调试分析] 与节点 "${nodeId}" 相关的元素 (${relevantElements.length} 个):`, 
+              relevantElements.map(el => ({
+                tagName: el.tagName,
+                id: el.id,
+                dataId: el.getAttribute('data-id'),
+                className: el.className.substring(0, 100),
+                textContent: el.textContent?.substring(0, 50)
+              }))
+            );
+            
+            // 特别检查是否有类似的节点ID
+            const allDataIds = Array.from(allMermaidElements)
+              .map(el => el.getAttribute('data-id'))
+              .filter(Boolean);
+            const allIds = Array.from(allMermaidElements)
+              .map(el => el.id)
+              .filter(Boolean);
+            
+            console.log('🔍 [调试分析] 所有data-id值:', [...new Set(allDataIds)]);
+            console.log('🔍 [调试分析] 所有id值:', [...new Set(allIds)]);
+            
+            // 查找最相似的ID
+            const similarIds = [...new Set([...allDataIds, ...allIds])].filter(id => 
+              id.toLowerCase().includes(nodeId.toLowerCase()) ||
+              nodeId.toLowerCase().includes(id.toLowerCase())
+            );
+            console.log(`🔍 [调试分析] 与 "${nodeId}" 相似的ID:`, similarIds);
+            
+          } else {
+            console.log(`🎯 [节点高亮] 成功找到并高亮 ${foundElements.length} 个元素`);
           }
           
           console.log('🎯 [节点高亮] 高亮节点完成:', nodeId);

@@ -1,7 +1,7 @@
-import React, { useState, useRef, useCallback, useEffect } from 'react';
+import React, { useState, useRef, useCallback, useEffect, useMemo } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { ArrowLeft, Download, Eye, EyeOff, FileText, File, Bot } from 'lucide-react';
-import MermaidDiagram from './MermaidDiagram';
+import FlowDiagram from './FlowDiagram';
 import ThemeToggle from './ThemeToggle';
 
 // 导入自定义hooks
@@ -74,13 +74,33 @@ const ViewerPageRefactored = () => {
     highlightParagraph,
     highlightMermaidNode,
     updateDynamicMapping,
-    dynamicMapping
+    dynamicMapping,
+    textToNodeMap // 添加静态映射关系
   } = useScrollDetection(
     containerRef,
     documentId,
     'argument', // 论证结构分析模式
     mermaidDiagramRef
   );
+
+  // 计算当前需要高亮的节点ID
+  const highlightedNodeId = useMemo(() => {
+    if (!activeContentBlockId) {
+      return null;
+    }
+
+    // 优先使用动态映射，如果没有则使用静态映射
+    const hasDynamicMapping = Object.keys(dynamicMapping.textToNodeMap).length > 0;
+    const currentMapping = hasDynamicMapping ? dynamicMapping.textToNodeMap : textToNodeMap;
+    
+    const mappedNodeId = currentMapping[activeContentBlockId];
+    
+    console.log('🎯 [高亮计算] 活跃段落:', activeContentBlockId);
+    console.log('🎯 [高亮计算] 使用映射类型:', hasDynamicMapping ? '动态' : '静态');
+    console.log('🎯 [高亮计算] 映射结果:', mappedNodeId);
+    
+    return mappedNodeId || null;
+  }, [activeContentBlockId, dynamicMapping.textToNodeMap, textToNodeMap]);
 
   // 处理节点点击事件
   const handleNodeClick = useCallback((nodeId) => {
@@ -447,6 +467,7 @@ const ViewerPageRefactored = () => {
                   <DemoModeRenderer 
                     content={null}
                     onContentBlockRef={handleContentBlockRef}
+                    nodeMapping={document.node_mappings_demo}
                   />
                 );
               }
@@ -483,6 +504,7 @@ const ViewerPageRefactored = () => {
                   onContentBlockRef={handleContentBlockRef}
                   isRealDocument={!documentId.startsWith('demo-')}
                   chunks={contentChunks.current}
+                  nodeMapping={document.node_mappings_demo}
                 />
               );
             })()}
@@ -532,9 +554,13 @@ const ViewerPageRefactored = () => {
               {/* 流程图内容区域 */}
               {(demoMindmapStatus === 'completed' && document.mermaid_code_demo) ? (
                 <div className="h-full overflow-hidden">
-                  <MermaidDiagram 
+                  <FlowDiagram 
                     ref={mermaidDiagramRef}
-                    code={document.mermaid_code_demo}
+                    apiData={{
+                      mermaid_string: document.mermaid_code_demo,
+                      node_mappings: document.node_mappings_demo || {}
+                    }}
+                    highlightedNodeId={highlightedNodeId}
                     onNodeClick={handleNodeClick}
                   />
                 </div>
