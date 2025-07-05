@@ -1,9 +1,92 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Handle, Position } from 'reactflow';
+import { CornerDownRight, GitBranchPlus, MoreHorizontal, Trash2 } from 'lucide-react';
 import './EditableNode.css'; // 引入CSS文件
+
+// 工具栏组件
+const Toolbar = ({ nodeId, onAddChildNode, onAddSiblingNode, onDeleteNode }) => {
+  const [showMoreMenu, setShowMoreMenu] = useState(false);
+  const moreButtonRef = useRef(null);
+  
+  // 处理点击外部关闭菜单
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (moreButtonRef.current && !moreButtonRef.current.contains(event.target)) {
+        setShowMoreMenu(false);
+      }
+    };
+    
+    if (showMoreMenu) {
+      document.addEventListener('mousedown', handleClickOutside);
+      return () => document.removeEventListener('mousedown', handleClickOutside);
+    }
+  }, [showMoreMenu]);
+
+  return (
+    <div className="node-toolbar">
+      <button 
+        className="toolbar-button" 
+        title="添加同级节点"
+        onClick={(e) => {
+          e.stopPropagation();
+          if (onAddSiblingNode) {
+            onAddSiblingNode(nodeId);
+          }
+        }}
+      >
+        <CornerDownRight size={16} />
+      </button>
+      
+      <button 
+        className="toolbar-button" 
+        title="添加子节点"
+        onClick={(e) => {
+          e.stopPropagation();
+          if (onAddChildNode) {
+            onAddChildNode(nodeId);
+          }
+        }}
+      >
+        <GitBranchPlus size={16} />
+      </button>
+      
+      <div className="toolbar-more-container" ref={moreButtonRef}>
+        <button 
+          className="toolbar-button" 
+          title="更多"
+          onClick={(e) => {
+            e.stopPropagation();
+            setShowMoreMenu(!showMoreMenu);
+          }}
+        >
+          <MoreHorizontal size={16} />
+        </button>
+        
+        {showMoreMenu && (
+          <div className="toolbar-more-menu">
+            <button 
+              className="toolbar-menu-item delete-item"
+              onClick={(e) => {
+                e.stopPropagation();
+                if (onDeleteNode && window.confirm('确定要删除这个节点吗？')) {
+                  onDeleteNode(nodeId);
+                }
+                setShowMoreMenu(false);
+              }}
+            >
+              <Trash2 size={14} />
+              <span>删除节点</span>
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
 
 const EditableNode = ({ data, id }) => {
   const [isEditing, setIsEditing] = useState(false);
+  const [isHovering, setIsHovering] = useState(false);
   const [editingContent, setEditingContent] = useState(''); // 保存编辑中的内容
   const textareaRef = useRef(null);
   const wasEditingRef = useRef(false); // 跟踪之前是否在编辑状态
@@ -106,8 +189,23 @@ const EditableNode = ({ data, id }) => {
     }
   }, [isEditing]);
 
+  // 处理鼠标进入事件
+  const handleMouseEnter = () => {
+    setIsHovering(true);
+  };
+
+  // 处理鼠标离开事件
+  const handleMouseLeave = () => {
+    setIsHovering(false);
+  };
+
   return (
-    <div className="editable-node" data-node-id={id}>
+    <div 
+      className="editable-node" 
+      data-node-id={id}
+      onMouseEnter={handleMouseEnter}
+      onMouseLeave={handleMouseLeave}
+    >
       {/* 添加一个用于接收连线的Handle在顶部 */}
       <Handle 
         type="target" 
@@ -133,6 +231,16 @@ const EditableNode = ({ data, id }) => {
           onInput={handleInput}
           className="editable-node-textarea"
           placeholder="输入节点内容..."
+        />
+      )}
+      
+      {/* 条件渲染工具栏 */}
+      {isHovering && (
+        <Toolbar 
+          nodeId={id} 
+          onAddChildNode={data.onAddChildNode}
+          onAddSiblingNode={data.onAddSiblingNode}
+          onDeleteNode={data.onDeleteNode}
         />
       )}
       

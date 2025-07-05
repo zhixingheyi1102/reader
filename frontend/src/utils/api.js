@@ -34,6 +34,91 @@ export const updateNodeLabel = async (documentId, nodeId, newLabel) => {
 };
 
 /**
+ * 添加子节点
+ * @param {string} documentId - 文档ID
+ * @param {string} parentNodeId - 父节点ID
+ * @param {string} newNodeLabel - 新节点标签
+ * @returns {Promise<Object>} API响应
+ */
+export const addChildNode = async (documentId, parentNodeId, newNodeLabel = '新节点') => {
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/document/${documentId}/node/${parentNodeId}/child`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ label: newNodeLabel })
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.message || `HTTP error! status: ${response.status}`);
+    }
+
+    return await response.json();
+  } catch (error) {
+    console.error('❌ [API] 添加子节点失败:', error);
+    throw error;
+  }
+};
+
+/**
+ * 添加同级节点
+ * @param {string} documentId - 文档ID
+ * @param {string} siblingNodeId - 同级节点ID
+ * @param {string} newNodeLabel - 新节点标签
+ * @returns {Promise<Object>} API响应
+ */
+export const addSiblingNode = async (documentId, siblingNodeId, newNodeLabel = '新节点') => {
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/document/${documentId}/node/${siblingNodeId}/sibling`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ label: newNodeLabel })
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.message || `HTTP error! status: ${response.status}`);
+    }
+
+    return await response.json();
+  } catch (error) {
+    console.error('❌ [API] 添加同级节点失败:', error);
+    throw error;
+  }
+};
+
+/**
+ * 删除节点
+ * @param {string} documentId - 文档ID
+ * @param {string} nodeId - 要删除的节点ID
+ * @returns {Promise<Object>} API响应
+ */
+export const deleteNode = async (documentId, nodeId) => {
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/document/${documentId}/node/${nodeId}`, {
+      method: 'DELETE',
+      headers: {
+        'Content-Type': 'application/json',
+      }
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.message || `HTTP error! status: ${response.status}`);
+    }
+
+    return await response.json();
+  } catch (error) {
+    console.error('❌ [API] 删除节点失败:', error);
+    throw error;
+  }
+};
+
+/**
  * 通用 API 错误处理
  * @param {Error} error - 错误对象
  * @returns {string} 用户友好的错误消息

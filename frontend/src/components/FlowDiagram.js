@@ -31,6 +31,9 @@ const nodeTypes = {
  * @param {string} props.highlightedNodeId - 需要高亮的节点ID
  * @param {Function} props.onNodeClick - 节点点击回调函数
  * @param {Function} props.onNodeLabelUpdate - 节点标签更新回调函数
+ * @param {Function} props.onAddChildNode - 添加子节点回调函数
+ * @param {Function} props.onAddSiblingNode - 添加同级节点回调函数
+ * @param {Function} props.onDeleteNode - 删除节点回调函数
  * @param {Object} props.layoutOptions - 布局选项
  * @param {string} props.className - CSS类名
  */
@@ -40,6 +43,9 @@ const FlowDiagramInner = ({
   highlightedNodeId,
   onNodeClick, 
   onNodeLabelUpdate,
+  onAddChildNode,
+  onAddSiblingNode,
+  onDeleteNode,
   layoutOptions = {}, 
   className = '',
   onReactFlowInstanceChange
@@ -136,7 +142,10 @@ const FlowDiagramInner = ({
         type: 'editableNode', // 设置为可编辑节点类型
         data: {
           ...node.data,
-          onLabelChange: (...args) => handleLabelChangeRef.current?.(...args) // 使用ref中的函数
+          onLabelChange: (...args) => handleLabelChangeRef.current?.(...args), // 使用ref中的函数
+          onAddChildNode: onAddChildNode,
+          onAddSiblingNode: onAddSiblingNode,
+          onDeleteNode: onDeleteNode
         }
       }));
 
@@ -445,6 +454,9 @@ const FlowDiagram = forwardRef(({
   highlightedNodeId, 
   onNodeClick, 
   onNodeLabelUpdate,
+  onAddChildNode,
+  onAddSiblingNode,
+  onDeleteNode,
   layoutOptions = {}, 
   className = '' 
 }, ref) => {
@@ -516,6 +528,9 @@ const FlowDiagram = forwardRef(({
           highlightedNodeId={highlightedNodeId}
           onNodeClick={onNodeClick}
           onNodeLabelUpdate={onNodeLabelUpdate}
+          onAddChildNode={onAddChildNode}
+          onAddSiblingNode={onAddSiblingNode}
+          onDeleteNode={onDeleteNode}
           layoutOptions={layoutOptions}
           className={className}
           onReactFlowInstanceChange={handleReactFlowInstanceChange}

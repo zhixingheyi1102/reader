@@ -28,6 +28,9 @@ const ViewerPageRefactored = () => {
   
   const [showToc, setShowToc] = useState(false);
 
+  // 添加contentChunks ref
+  const contentChunks = useRef([]);
+
   // 使用文档查看器 hook
   const {
     documentId,
@@ -67,7 +70,7 @@ const ViewerPageRefactored = () => {
   const {
     activeChunkId,
     activeContentBlockId, // 添加段落级状态
-    contentChunks,
+    contentChunks: scrollChunks,
     handleSectionRef,
     handleContentBlockRef,
     scrollToSection,
@@ -76,7 +79,9 @@ const ViewerPageRefactored = () => {
     highlightMermaidNode,
     updateDynamicMapping,
     dynamicMapping,
-    textToNodeMap // 添加静态映射关系
+    textToNodeMap, // 添加静态映射关系
+    setActiveContentBlockId, // 🔑 添加状态设置函数
+    lockUserInteraction // 🔑 添加用户交互锁定函数
   } = useScrollDetection(
     containerRef,
     documentId,
@@ -107,14 +112,46 @@ const ViewerPageRefactored = () => {
   const handleNodeClick = useCallback((nodeId) => {
     console.log('🖱️ [父组件] 接收到节点点击事件:', nodeId);
     
-    // 只滚动到对应文本块，不手动高亮
-    // 高亮将由自动滚动检测来处理
+    // 🔑 锁定用户交互状态，防止滚动检测干扰
+    lockUserInteraction(1000); // 锁定1秒
+    
+    // 🔑 立即更新高亮状态，不依赖滚动检测
+    // 优先使用动态映射，如果没有则使用静态映射
+    const hasDynamicMapping = Object.keys(dynamicMapping.textToNodeMap).length > 0;
+    const currentNodeToTextMap = hasDynamicMapping ? dynamicMapping.nodeToTextMap : 
+      Object.keys(textToNodeMap).reduce((acc, textId) => {
+        const nodeId = textToNodeMap[textId];
+        if (!acc[nodeId]) acc[nodeId] = [];
+        acc[nodeId].push(textId);
+        return acc;
+      }, {});
+    
+    const targetParagraphs = currentNodeToTextMap[nodeId];
+    if (targetParagraphs && targetParagraphs.length > 0) {
+      const primaryParagraph = Array.isArray(targetParagraphs) ? targetParagraphs[0] : targetParagraphs;
+      console.log('🖱️ [直接高亮] 立即高亮段落:', primaryParagraph, '对应节点:', nodeId);
+      
+      // 直接调用高亮函数，确保立即响应
+      highlightParagraph(primaryParagraph);
+      highlightMermaidNode(nodeId);
+      
+      // 更新 activeContentBlockId 状态，确保状态同步
+      // 使用 setTimeout 确保在滚动之前完成状态更新
+      setTimeout(() => {
+        setActiveContentBlockId(primaryParagraph);
+      }, 0);
+    }
+    
+    // 滚动到对应文本块
     scrollToContentBlock(nodeId);
-  }, [scrollToContentBlock]);
+  }, [scrollToContentBlock, dynamicMapping, textToNodeMap, highlightParagraph, highlightMermaidNode, setActiveContentBlockId, lockUserInteraction]);
 
   // 🔑 新增：处理节点标签更新的回调函数
   const handleNodeLabelUpdate = useCallback((nodeId, newLabel) => {
     console.log('📝 [节点标签更新] 同步更新document状态:', nodeId, '->', newLabel);
+    
+    // 🔑 锁定用户交互状态，防止滚动检测干扰
+    lockUserInteraction(500); // 锁定0.5秒
     
     // 同步更新document.node_mappings_demo中的对应节点标签
     setDocument(prevDoc => {
@@ -139,7 +176,70 @@ const ViewerPageRefactored = () => {
         node_mappings_demo: newNodeMappings 
       };
     });
-  }, [setDocument]);
+  }, [setDocument, lockUserInteraction]);
+
+  // 创建动态映射的辅助函数
+  const createDynamicMapping = useCallback((chunks, mermaidCode, nodeMapping) => {
+    console.log('🔗 [映射创建] 开始创建动态映射');
+    console.log('🔗 [映射创建] chunks数量:', chunks?.length);
+    console.log('🔗 [映射创建] mermaidCode长度:', mermaidCode?.length);
+    console.log('🔗 [映射创建] nodeMapping类型:', typeof nodeMapping);
+    
+    if (!mermaidCode || !nodeMapping) {
+      console.warn('🔗 [映射创建] 缺少必要参数，跳过映射创建');
+      return;
+    }
+    
+    const newTextToNodeMap = {};
+    const newNodeToTextMap = {};
+    
+    if (nodeMapping && typeof nodeMapping === 'object') {
+      console.log('🔗 [映射创建] 基于AI语义块创建段落级映射');
+      console.log('🔗 [映射创建] nodeMapping键数量:', Object.keys(nodeMapping).length);
+      
+      // 为每个AI语义块创建映射
+      Object.entries(nodeMapping).forEach(([nodeId, nodeInfo]) => {
+        console.log(`🔗 [映射创建] 处理节点 ${nodeId}:`, nodeInfo);
+        
+        if (nodeInfo && nodeInfo.paragraph_ids && Array.isArray(nodeInfo.paragraph_ids)) {
+          console.log(`🔗 [映射创建] 节点 ${nodeId} 包含段落:`, nodeInfo.paragraph_ids);
+          
+          // 为每个段落创建到节点的映射
+          nodeInfo.paragraph_ids.forEach(paraId => {
+            if (paraId && typeof paraId === 'string') {
+              // 统一段落ID格式
+              const paragraphId = paraId.startsWith('para-') ? paraId : `para-${paraId}`;
+              
+              // 段落到节点的映射（多对一：多个段落可能对应同一个节点）
+              newTextToNodeMap[paragraphId] = nodeId;
+              
+              console.log(`📍 [映射创建] ${paragraphId} -> 节点 ${nodeId}`);
+            } else {
+              console.warn(`📍 [映射创建] 无效的段落ID:`, paraId);
+            }
+          });
+          
+          // 节点到段落组的映射（一对多：一个节点对应多个段落）
+          newNodeToTextMap[nodeId] = nodeInfo.paragraph_ids.map(paraId => 
+            paraId.startsWith('para-') ? paraId : `para-${paraId}`
+          );
+          
+          console.log(`🔗 [映射创建] 节点 ${nodeId} -> 段落组 [${newNodeToTextMap[nodeId].join(', ')}]`);
+        } else {
+          console.warn(`🔗 [映射创建] 节点 ${nodeId} 缺少有效的段落ID数组:`, nodeInfo);
+        }
+      });
+      
+      console.log('🔗 [映射创建] 映射创建完成');
+      console.log('🔗 [映射创建] 段落到节点映射数量:', Object.keys(newTextToNodeMap).length);
+      console.log('🔗 [映射创建] 节点到段落映射数量:', Object.keys(newNodeToTextMap).length);
+      
+      // 调用updateDynamicMapping来更新状态
+      updateDynamicMapping(newTextToNodeMap, newNodeToTextMap);
+    } else {
+      console.warn('🔗 [映射创建] nodeMapping无效，跳过映射创建');
+    }
+  }, [updateDynamicMapping]);
 
   // 文档查看区域切换按钮
   const ViewModeToggle = () => {
@@ -233,9 +333,9 @@ const ViewerPageRefactored = () => {
         console.log('🔗 [主组件] 参数检查 - nodeMapping详情:', JSON.stringify(nodeMapping, null, 2));
         
         // 调用更新动态映射函数
-        console.log('🔗 [主组件] 📞 正在调用updateDynamicMapping...');
-        updateDynamicMapping(contentChunks.current, mermaidCode, nodeMapping);
-        console.log('🔗 [主组件] ✅ updateDynamicMapping调用完成');
+        console.log('🔗 [主组件] 📞 正在调用createDynamicMapping...');
+        createDynamicMapping(contentChunks.current, mermaidCode, nodeMapping);
+        console.log('🔗 [主组件] ✅ createDynamicMapping调用完成');
         
         // 🔑 关键：标记为已初始化，防止重复执行
         mappingInitialized.current = true;
@@ -257,7 +357,7 @@ const ViewerPageRefactored = () => {
       console.log('🔗 [主组件动态映射] - chunksLoaded:', chunksLoaded);
       console.log('🔗 [主组件动态映射] - mappingInitialized.current:', mappingInitialized.current);
     }
-  }, [document, chunksLoaded, updateDynamicMapping, documentId]);
+  }, [document, chunksLoaded, createDynamicMapping, documentId]);
 
   // 调试文档状态
   useEffect(() => {
@@ -302,6 +402,226 @@ const ViewerPageRefactored = () => {
     }
   }, [document, documentId, chunksLoaded]);
 
+  // 🔑 新增：添加子节点的回调函数
+  const handleAddChildNode = useCallback(async (parentNodeId) => {
+    try {
+      console.log('🆕 [父组件] 添加子节点:', parentNodeId);
+      
+      // 🔑 锁定用户交互状态，防止滚动检测干扰
+      lockUserInteraction(500); // 锁定0.5秒
+      
+      // 生成新节点ID和边ID（使用时间戳确保唯一性）
+      const newNodeId = `node_${Date.now()}`;
+      const newEdgeId = `edge_${parentNodeId}_${newNodeId}`;
+      const newNodeLabel = '新节点';
+      
+      // 更新document状态
+      setDocument(prevDoc => {
+        if (!prevDoc) {
+          console.warn('🆕 [父组件] document不存在，无法添加子节点');
+          return prevDoc;
+        }
+        
+        // 创建新的node_mappings
+        const newNodeMappings = {
+          ...prevDoc.node_mappings_demo,
+          [newNodeId]: {
+            text_snippet: newNodeLabel,
+            paragraph_ids: []
+          }
+        };
+        
+        // 创建新的edges（如果存在edges数组）
+        const newEdges = prevDoc.edges ? [
+          ...prevDoc.edges,
+          {
+            id: newEdgeId,
+            source: parentNodeId,
+            target: newNodeId,
+            type: 'smoothstep'
+          }
+        ] : [];
+        
+        // 更新mermaid代码（添加新的节点和连接）
+        let updatedMermaidCode = prevDoc.mermaid_code_demo || '';
+        if (updatedMermaidCode) {
+          updatedMermaidCode += `\n    ${parentNodeId} --> ${newNodeId}[${newNodeLabel}]`;
+        }
+        
+        console.log('🆕 [父组件] 子节点添加完成，新节点ID:', newNodeId);
+        
+        return {
+          ...prevDoc,
+          node_mappings_demo: newNodeMappings,
+          edges: newEdges,
+          mermaid_code_demo: updatedMermaidCode
+        };
+      });
+      
+      // 如果不是示例模式，调用后端API
+      if (!documentId.startsWith('demo-')) {
+        try {
+          // 这里可以添加后端API调用
+          console.log('🆕 [父组件] 后端API调用暂未实现');
+        } catch (apiError) {
+          console.error('❌ [父组件] 添加子节点API调用失败:', apiError);
+        }
+      }
+    } catch (error) {
+      console.error('❌ [父组件] 添加子节点失败:', error);
+    }
+  }, [documentId, setDocument, lockUserInteraction]);
+  
+  // 🔑 新增：添加同级节点的回调函数
+  const handleAddSiblingNode = useCallback(async (siblingNodeId) => {
+    try {
+      console.log('🆕 [父组件] 添加同级节点:', siblingNodeId);
+      
+      // 🔑 锁定用户交互状态，防止滚动检测干扰
+      lockUserInteraction(500); // 锁定0.5秒
+      
+      // 从当前document的edges中找到同级节点的父节点
+      const parentEdge = document?.edges?.find(edge => edge.target === siblingNodeId);
+      if (!parentEdge && document?.mermaid_code_demo) {
+        // 如果没有edges数组，尝试从mermaid代码中解析
+        const mermaidLines = document.mermaid_code_demo.split('\n');
+        const parentLine = mermaidLines.find(line => line.includes(`--> ${siblingNodeId}`));
+        if (parentLine) {
+          const match = parentLine.match(/(\w+)\s*-->\s*\w+/);
+          if (match) {
+            const parentNodeId = match[1];
+            await addSiblingWithParent(siblingNodeId, parentNodeId);
+            return;
+          }
+        }
+        console.warn('❌ [父组件] 无法找到同级节点的父节点');
+        return;
+      }
+      
+      const parentNodeId = parentEdge?.source;
+      if (!parentNodeId) {
+        console.warn('❌ [父组件] 无法确定父节点ID');
+        return;
+      }
+      
+      await addSiblingWithParent(siblingNodeId, parentNodeId);
+      
+    } catch (error) {
+      console.error('❌ [父组件] 添加同级节点失败:', error);
+    }
+  }, [document, lockUserInteraction]);
+  
+  // 添加同级节点的辅助函数
+  const addSiblingWithParent = useCallback(async (siblingNodeId, parentNodeId) => {
+    const newNodeId = `node_${Date.now()}`;
+    const newEdgeId = `edge_${parentNodeId}_${newNodeId}`;
+    const newNodeLabel = '新节点';
+    
+    // 更新document状态
+    setDocument(prevDoc => {
+      if (!prevDoc) {
+        console.warn('🆕 [父组件] document不存在，无法添加同级节点');
+        return prevDoc;
+      }
+      
+      // 创建新的node_mappings
+      const newNodeMappings = {
+        ...prevDoc.node_mappings_demo,
+        [newNodeId]: {
+          text_snippet: newNodeLabel,
+          paragraph_ids: []
+        }
+      };
+      
+      // 创建新的edges（如果存在edges数组）
+      const newEdges = prevDoc.edges ? [
+        ...prevDoc.edges,
+        {
+          id: newEdgeId,
+          source: parentNodeId,
+          target: newNodeId,
+          type: 'smoothstep'
+        }
+      ] : [];
+      
+      // 更新mermaid代码（添加新的节点和连接）
+      let updatedMermaidCode = prevDoc.mermaid_code_demo || '';
+      if (updatedMermaidCode) {
+        updatedMermaidCode += `\n    ${parentNodeId} --> ${newNodeId}[${newNodeLabel}]`;
+      }
+      
+      console.log('🆕 [父组件] 同级节点添加完成，新节点ID:', newNodeId);
+      
+      return {
+        ...prevDoc,
+        node_mappings_demo: newNodeMappings,
+        edges: newEdges,
+        mermaid_code_demo: updatedMermaidCode
+      };
+    });
+  }, [setDocument]);
+  
+  // 🔑 新增：删除节点的回调函数
+  const handleDeleteNode = useCallback(async (nodeIdToDelete) => {
+    try {
+      console.log('🗑️ [父组件] 删除节点:', nodeIdToDelete);
+      
+      // 🔑 锁定用户交互状态，防止滚动检测干扰
+      lockUserInteraction(500); // 锁定0.5秒
+      
+      // 更新document状态
+      setDocument(prevDoc => {
+        if (!prevDoc) {
+          console.warn('🗑️ [父组件] document不存在，无法删除节点');
+          return prevDoc;
+        }
+        
+        // 移除节点映射
+        const newNodeMappings = { ...prevDoc.node_mappings_demo };
+        delete newNodeMappings[nodeIdToDelete];
+        
+        // 移除相关的edges（如果存在edges数组）
+        const newEdges = prevDoc.edges ? 
+          prevDoc.edges.filter(edge => 
+            edge.source !== nodeIdToDelete && edge.target !== nodeIdToDelete
+          ) : [];
+        
+        // 更新mermaid代码（移除相关的节点和连接）
+        let updatedMermaidCode = prevDoc.mermaid_code_demo || '';
+        if (updatedMermaidCode) {
+          const lines = updatedMermaidCode.split('\n');
+          const filteredLines = lines.filter(line => 
+            !line.includes(nodeIdToDelete) && 
+            !line.includes(`--> ${nodeIdToDelete}`) &&
+            !line.includes(`${nodeIdToDelete} -->`)
+          );
+          updatedMermaidCode = filteredLines.join('\n');
+        }
+        
+        console.log('🗑️ [父组件] 节点删除完成');
+        
+        return {
+          ...prevDoc,
+          node_mappings_demo: newNodeMappings,
+          edges: newEdges,
+          mermaid_code_demo: updatedMermaidCode
+        };
+      });
+      
+      // 如果不是示例模式，调用后端API
+      if (!documentId.startsWith('demo-')) {
+        try {
+          // 这里可以添加后端API调用
+          console.log('🗑️ [父组件] 后端API调用暂未实现');
+        } catch (apiError) {
+          console.error('❌ [父组件] 删除节点API调用失败:', apiError);
+        }
+      }
+    } catch (error) {
+      console.error('❌ [父组件] 删除节点失败:', error);
+    }
+  }, [documentId, setDocument, lockUserInteraction]);
+
   // 处理 node_mappings 更新的函数
   const handleNodeMappingUpdate = useCallback(async (newNodeMappings) => {
     try {
@@ -337,7 +657,7 @@ const ViewerPageRefactored = () => {
       // 更新动态映射以反映新的节点关系
       if (contentChunks.current.length > 0 && document && document.mermaid_code_demo) {
         console.log('📍 [节点映射更新] 重新生成动态映射');
-        updateDynamicMapping(contentChunks.current, document.mermaid_code_demo, newNodeMappings);
+        createDynamicMapping(contentChunks.current, document.mermaid_code_demo, newNodeMappings);
       }
       
     } catch (error) {
@@ -345,7 +665,7 @@ const ViewerPageRefactored = () => {
       const errorMessage = error.response?.data?.detail || '保存节点映射失败';
       toast.error(errorMessage);
     }
-  }, [documentId, setDocument, updateDynamicMapping, document]);
+  }, [documentId, setDocument, createDynamicMapping, document]);
 
   // 处理拖拽排序后的回调函数
   const handleOrderChange = useCallback(async (newItems) => {
@@ -454,7 +774,7 @@ const ViewerPageRefactored = () => {
         // 立即重新生成动态映射
         if (contentChunks.current.length > 0 && prev.mermaid_code_demo) {
           console.log('📍 [排序更新] 重新生成动态映射');
-          updateDynamicMapping(contentChunks.current, prev.mermaid_code_demo, newNodeMappings);
+          createDynamicMapping(contentChunks.current, prev.mermaid_code_demo, newNodeMappings);
         }
         
         return updatedDocument;
@@ -487,7 +807,7 @@ const ViewerPageRefactored = () => {
       const errorMessage = error.response?.data?.detail || '处理拖拽排序失败';
       toast.error(errorMessage);
     }
-  }, [documentId, document, setDocument, updateDynamicMapping]);
+  }, [documentId, document, setDocument, createDynamicMapping]);
 
   // 加载状态
   if (loading) {
@@ -789,11 +1109,15 @@ const ViewerPageRefactored = () => {
                     ref={mermaidDiagramRef}
                     apiData={{
                       mermaid_string: document.mermaid_code_demo,
-                      node_mappings: document.node_mappings_demo || {}
+                      node_mappings: document.node_mappings_demo || {},
+                      document_id: documentId
                     }}
                     highlightedNodeId={highlightedNodeId}
                     onNodeClick={handleNodeClick}
                     onNodeLabelUpdate={handleNodeLabelUpdate}
+                    onAddChildNode={handleAddChildNode}
+                    onAddSiblingNode={handleAddSiblingNode}
+                    onDeleteNode={handleDeleteNode}
                   />
                 </div>
               ) : (

@@ -132,7 +132,7 @@ class ArgumentStructureAnalyzer:
 
 你的输出必须是一个单一的、完整的 JSON 对象，不要在 JSON 代码块前后添加任何额外的解释性文字。
 
-这个 JSON 对象必须包含两个顶级键："mermaid_string" 和 "node_mappings"。
+这个 JSON 对象必须包含三个顶级键："mermaid_string"、"node_mappings" 和 "edges"。
 
 mermaid_string:
 - 值为符合 Mermaid.js 语法的流程图（graph TD）
@@ -152,6 +152,13 @@ node_mappings:
   - "paragraph_ids": 构成该节点的段落ID数组（如 ["para-2", "para-3"]）
   - "semantic_role": 该节点在论证中的角色（如 "引言"、"核心论点"、"支撑证据"、"反驳"、"结论" 等）
 
+edges:
+- 值为对象数组，每个对象代表一条边
+- 每个对象必须包含两个键：
+  - "source": 边的起始节点ID
+  - "target": 边的目标节点ID
+- 这些边必须与 mermaid_string 中的连接关系一致
+
 关键要求：
 1. 所有节点 ID 必须在 mermaid_string 中存在
 2. paragraph_ids 必须严格使用原文的段落标记 [para-X]，不可修改
@@ -159,6 +166,7 @@ node_mappings:
 4. 节点的划分应该基于段落的论证功能，相关功能的段落可以组合在一个节点中
 5. 流程图应该清晰展现论证的逻辑推理路径
 6. 保持段落的完整性，不要拆分或重组段落内容
+7. edges 数组中的每条边必须与 mermaid_string 中的连接关系完全一致
 
 现在，请分析以下带有段落ID的文本：
 
@@ -265,11 +273,28 @@ node_mappings:
                 
                 structure_data['node_mappings'] = valid_mappings
                 
+                # 检查是否包含edges字段，如果没有则尝试从mermaid_string中提取
+                if 'edges' not in structure_data:
+                    print("⚠️ [数据结构警告] 响应中没有edges字段，将从mermaid_string中提取")
+                    # 从mermaid_string中提取边关系
+                    edges = []
+                    mermaid_string = structure_data['mermaid_string']
+                    # 匹配形如 "A --> B" 的边定义
+                    edge_pattern = r'([A-Za-z0-9_]+)\s*-->\s*([A-Za-z0-9_]+)'
+                    for match in re.finditer(edge_pattern, mermaid_string):
+                        source, target = match.groups()
+                        edges.append({"source": source, "target": target})
+                    structure_data['edges'] = edges
+                    print(f"🔧 [自动提取] 从mermaid_string中提取了 {len(edges)} 条边")
+                
                 print(f"✅ [论证结构分析] 成功生成包含 {len(structure_data['node_mappings'])} 个节点的流程图")
+                
+                # 返回成功结果
                 return {
                     "success": True,
                     "mermaid_code": structure_data['mermaid_string'],
-                    "node_mappings": structure_data['node_mappings']
+                    "node_mappings": structure_data['node_mappings'],
+                    "edges": structure_data['edges']
                 }
                 
             except json.JSONDecodeError as parse_error:
@@ -680,23 +705,15 @@ async def generate_argument_structure(document_id: str):
         raise HTTPException(status_code=500, detail=f"生成论证结构时出错: {str(e)}")
 
 async def generate_argument_structure_async(document_id: str, content: str):
-    """异步生成论证结构流程图"""
+    """异步生成论证结构"""
     try:
-        print(f"\n🚀 [开始分析] 文档ID: {document_id}")
-        print(f"📄 [文档内容] 长度: {len(content)} 字符")
-        print("=" * 60)
+        print(f"🔄 [异步任务] 开始为文档 {document_id} 生成论证结构")
+        argument_analyzer = ArgumentStructureAnalyzer()
         
-        # 获取已经处理过的带段落ID的内容
-        print("📝 [获取段落ID] 使用已处理的段落ID内容...")
-        text_with_ids = document_status[document_id]["content_with_ids"]
-        if not text_with_ids:
-            # 如果没有预处理的内容，重新生成（向后兼容）
-            print("📝 [重新处理] 未找到预处理的段落ID内容，重新生成...")
-            text_with_ids = argument_analyzer.add_paragraph_ids(content)
-            document_status[document_id]["content_with_ids"] = text_with_ids
+        # 为文本添加段落ID
+        text_with_ids = argument_analyzer.add_paragraph_ids(content)
         
-        # 分析论证结构
-        print("🧠 [AI分析] 开始分析论证结构...")
+        # 生成论证结构
         result = await argument_analyzer.generate_argument_structure(text_with_ids)
         
         if result["success"]:
@@ -704,10 +721,11 @@ async def generate_argument_structure_async(document_id: str, content: str):
             document_status[document_id]["status_demo"] = "completed"
             document_status[document_id]["mermaid_code_demo"] = result["mermaid_code"]
             document_status[document_id]["node_mappings_demo"] = result["node_mappings"]
+            document_status[document_id]["edges_demo"] = result["edges"]  # 保存edges数据
             document_status[document_id]["content_with_ids"] = text_with_ids  # 保存带ID的内容
             
             print(f"✅ [分析完成] 文档 {document_id} 论证结构分析成功")
-            print(f"📊 [生成结果] 包含 {len(result['node_mappings'])} 个论证节点")
+            print(f"📊 [生成结果] 包含 {len(result['node_mappings'])} 个论证节点和 {len(result['edges'])} 条边")
         else:
             # 分析失败
             document_status[document_id]["status_demo"] = "error"
@@ -740,6 +758,7 @@ async def get_document_status(document_id: str):
         "status_demo": doc_info.get("status_demo", "not_started"),
         "mermaid_code_demo": doc_info.get("mermaid_code_demo"),
         "node_mappings_demo": doc_info.get("node_mappings_demo", {}),
+        "edges_demo": doc_info.get("edges_demo", []),
         "error_demo": doc_info.get("error_demo"),
         "content_with_ids": doc_info.get("content_with_ids"),
     }
@@ -767,6 +786,7 @@ async def get_document(document_id: str):
                 "file_type": doc_info.get("file_type", ".md"),
                 "mermaid_code_demo": doc_info.get("mermaid_code_demo"),
                 "node_mappings_demo": doc_info.get("node_mappings_demo", {}),
+                "edges_demo": doc_info.get("edges_demo", []),
                 "status_demo": doc_info.get("status_demo", "not_started"),
                 "error_demo": doc_info.get("error_demo"),
                 "content_with_ids": doc_info.get("content_with_ids"),
@@ -791,6 +811,7 @@ async def get_document(document_id: str):
                 "file_type": ".md",
                 "mermaid_code_demo": None,
                 "node_mappings_demo": {},
+                "edges_demo": [],
                 "status_demo": "not_started",
                 "error_demo": None,
                 "content_with_ids": None

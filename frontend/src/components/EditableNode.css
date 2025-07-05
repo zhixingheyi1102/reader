@@ -87,4 +87,162 @@
 .react-flow__node .editable-node-textarea:focus {
   position: relative;
   z-index: 1001;
+}
+
+/* 工具栏样式 */
+.node-toolbar {
+  position: absolute;
+  top: -50px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: white;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  padding: 6px;
+  display: flex;
+  gap: 4px;
+  z-index: 1000;
+  animation: fadeInUp 0.2s ease-out;
+}
+
+/* 工具栏按钮样式 */
+.toolbar-button {
+  background: transparent;
+  border: none;
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: #64748b;
+  transition: all 0.2s ease;
+  padding: 0;
+}
+
+.toolbar-button:hover {
+  background-color: #f1f5f9;
+  color: #334155;
+  transform: scale(1.05);
+}
+
+.toolbar-button:active {
+  transform: scale(0.95);
+}
+
+/* 工具栏显示动画 */
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+}
+
+/* 深色模式下的工具栏样式 */
+:root.dark .node-toolbar {
+  background: #1e293b;
+  border-color: #334155;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+:root.dark .toolbar-button {
+  color: #94a3b8;
+}
+
+:root.dark .toolbar-button:hover {
+  background-color: #334155;
+  color: #e2e8f0;
+}
+
+/* 工具栏更多选项容器 */
+.toolbar-more-container {
+  position: relative;
+}
+
+/* 工具栏下拉菜单 */
+.toolbar-more-menu {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  margin-top: 4px;
+  background: white;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+  min-width: 120px;
+  z-index: 1001;
+  animation: fadeInDown 0.15s ease-out;
+}
+
+/* 工具栏菜单项 */
+.toolbar-menu-item {
+  width: 100%;
+  padding: 8px 12px;
+  border: none;
+  background: transparent;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  font-size: 13px;
+  color: #374151;
+  transition: background-color 0.2s ease;
+  border-radius: 4px;
+  margin: 2px;
+}
+
+.toolbar-menu-item:hover {
+  background-color: #f1f5f9;
+}
+
+.toolbar-menu-item:first-child {
+  margin-top: 4px;
+}
+
+.toolbar-menu-item:last-child {
+  margin-bottom: 4px;
+}
+
+/* 删除按钮特殊样式 */
+.toolbar-menu-item.delete-item:hover {
+  background-color: #fef2f2;
+  color: #dc2626;
+}
+
+/* 下拉菜单显示动画 */
+@keyframes fadeInDown {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* 深色模式下的下拉菜单样式 */
+:root.dark .toolbar-more-menu {
+  background: #1e293b;
+  border-color: #334155;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+
+:root.dark .toolbar-menu-item {
+  color: #e2e8f0;
+}
+
+:root.dark .toolbar-menu-item:hover {
+  background-color: #374151;
+}
+
+:root.dark .toolbar-menu-item.delete-item:hover {
+  background-color: #450a0a;
+  color: #f87171;
 } 

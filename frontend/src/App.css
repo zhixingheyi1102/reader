@@ -117,16 +117,21 @@
 }
 
 /* React Flow节点高亮样式 */
-.react-flow__node.highlighted-node {
+.react-flow__node.highlighted-node,
+.react-flow__node.mermaid-highlighted-node {
   border: 3px solid #FB923C !important;
   box-shadow: 0 0 15px rgba(251, 146, 60, 0.6), 0 0 30px rgba(251, 146, 60, 0.3) !important;
   z-index: 1000 !important;
+  background-color: rgba(251, 146, 60, 0.05) !important;
+  transition: all 0.2s ease-in-out !important;
 }
 
 /* 暗模式下的React Flow节点高亮 */
-:root.dark .react-flow__node.highlighted-node {
+:root.dark .react-flow__node.highlighted-node,
+:root.dark .react-flow__node.mermaid-highlighted-node {
   border: 3px solid #FED7AA !important;
   box-shadow: 0 0 15px rgba(253, 215, 170, 0.8), 0 0 30px rgba(253, 215, 170, 0.4) !important;
+  background-color: rgba(253, 215, 170, 0.08) !important;
 }
 
 /* 活跃文本块样式 - 静止状态，无动画 */

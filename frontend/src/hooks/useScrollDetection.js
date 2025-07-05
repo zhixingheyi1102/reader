@@ -73,17 +73,79 @@ const nodeToTextMap = {
 };
 
 export const useScrollDetection = (containerRef, documentId, currentMindmapMode, mermaidDiagramRef) => {
-  const [activeChunkId, setActiveChunkId] = useState(null);
+  // 用户交互锁定状态 - 防止滚动检测干扰用户点击
+  const [isUserInteracting, setIsUserInteracting] = useState(false);
+  const userInteractionTimeoutRef = useRef(null);
+
+  // 🔑 锁定用户交互状态，防止滚动检测干扰
+  const lockUserInteraction = useCallback((duration = 1000) => {
+    console.log('🔒 [用户交互锁定] 锁定用户交互状态，持续时间:', duration);
+    setIsUserInteracting(true);
+    
+    // 清除之前的定时器
+    if (userInteractionTimeoutRef.current) {
+      clearTimeout(userInteractionTimeoutRef.current);
+    }
+    
+    // 设置新的定时器
+    userInteractionTimeoutRef.current = setTimeout(() => {
+      console.log('🔓 [用户交互锁定] 解除用户交互锁定');
+      setIsUserInteracting(false);
+    }, duration);
+  }, []);
+
+  // 当前活动段落和节点ID的状态
   const [activeContentBlockId, setActiveContentBlockId] = useState(null);
-  const [previousActiveNode, setPreviousActiveNode] = useState(null);
-  
-  const sectionRefs = useRef(new Map()); // Map<chunk_id, HTMLElement> - 仅用于目录导航
-  const contentBlockRefs = useRef(new Map()); // Map<block_id, HTMLElement> - 用于段落级检测和高亮
-  const contentChunks = useRef([]); // 存储内容分块信息
-  
-  // 动态映射关系 - 用于真实上传的文档
+  const [activeChunkId, setActiveChunkId] = useState(null);
+
+  // 存储段落映射关系
   const [dynamicTextToNodeMap, setDynamicTextToNodeMap] = useState({});
   const [dynamicNodeToTextMap, setDynamicNodeToTextMap] = useState({});
+
+  // 存储静态映射关系
+  const [textToNodeMap, setTextToNodeMap] = useState({});
+  const [nodeToTextMap, setNodeToTextMap] = useState({});
+
+  // 存储内容块/段落的引用
+  const contentBlockRefs = useRef(new Map());
+  const sectionRefs = useRef(new Map());
+
+  // 存储内容块
+  const [contentChunks, setContentChunks] = useState([]);
+
+  // 存储之前的活动节点，用于优化高亮性能
+  const [previousActiveNode, setPreviousActiveNode] = useState(null);
+  
+  // 静态映射关系 - 用于示例文档的固定映射
+  const staticNodeToTextMap = {
+    'A': 'text-block-0',
+    'B': 'text-block-1',
+    'C': 'text-block-2',
+    'D': 'text-block-3',
+    'E': 'text-block-4',
+    'F': 'text-block-5',
+    'G': 'text-block-6',
+    'H': 'text-block-7',
+    'I': 'text-block-8',
+    'J': 'text-block-9',
+  };
+
+  // 初始化静态映射
+  useEffect(() => {
+    // 创建反向映射 textToNodeMap
+    const reverseMapping = {};
+    Object.keys(staticNodeToTextMap).forEach(nodeId => {
+      const textId = staticNodeToTextMap[nodeId];
+      reverseMapping[textId] = nodeId;
+    });
+    
+    setTextToNodeMap(reverseMapping);
+    setNodeToTextMap(staticNodeToTextMap);
+    
+    console.log('📊 [静态映射] 初始化完成');
+    console.log('📊 [静态映射] 节点到文本映射:', staticNodeToTextMap);
+    console.log('📊 [静态映射] 文本到节点映射:', reverseMapping);
+  }, []);
 
   // onSectionRef 回调实现 - 仅用于目录导航，不影响段落高亮
   const handleSectionRef = useCallback((element, chunkId) => {
@@ -135,9 +197,9 @@ export const useScrollDetection = (containerRef, documentId, currentMindmapMode,
       
       // 定义高亮应用函数
       const applyHighlighting = () => {
-        // 移除之前的高亮
-        if (previousActiveNode) {
-          console.log('🎯 [节点高亮] 移除之前的高亮:', previousActiveNode);
+        // 🔑 关键修复：只有当需要切换到不同节点时，才移除之前的高亮
+        if (previousActiveNode && previousActiveNode !== nodeId) {
+          console.log('🎯 [节点高亮] 移除之前的高亮（不同节点）:', previousActiveNode, '→', nodeId);
           const prevSelectors = [
             `[data-id="${previousActiveNode}"]`,
             `#${previousActiveNode}`,
@@ -162,40 +224,20 @@ export const useScrollDetection = (containerRef, documentId, currentMindmapMode,
           if (!foundPrev) {
             console.warn('🎯 [节点高亮] 未找到之前的节点:', previousActiveNode);
           }
+        } else if (previousActiveNode === nodeId) {
+          console.log('🎯 [节点高亮] 点击同一节点，保持现有高亮:', nodeId);
         }
 
-        // 添加新的高亮
+        // 添加新的高亮（即使是同一节点也确保高亮存在）
         if (nodeId) {
-          console.log('🎯 [节点高亮] 查找当前节点:', nodeId);
+          console.log('🎯 [节点高亮] 确保节点高亮:', nodeId);
           
-          // 增强选择器 - 处理更多可能的节点格式
+          // 使用精简的选择器列表，避免重复操作
           const selectors = [
-            // 直接匹配data-id属性
             `[data-id="${nodeId}"]`,
-            // 直接匹配id属性
             `#${nodeId}`,
-            // 匹配class中包含节点ID的
-            `.node-${nodeId}`,
-            // 匹配id属性中包含节点ID的（部分匹配）
             `[id*="${nodeId}"]`,
-            // 匹配class属性中包含节点ID的（部分匹配）
-            `[class*="${nodeId}"]`,
-            // 特殊处理：flowchart前缀格式
-            `[id*="flowchart-${nodeId}-"]`,
-            `[data-id*="flowchart-${nodeId}"]`,
-            // 特殊处理：直接匹配包含nodeId的元素
-            `*[id="${nodeId}"]`,
-            `*[data-id="${nodeId}"]`,
-            // 匹配SVG g元素（Mermaid常用格式）
-            `g[data-id="${nodeId}"]`,
-            `g[id*="${nodeId}"]`,
-            // 处理可能的转义问题（特别是数字后缀）
-            `[data-id="${nodeId.replace(/[^a-zA-Z0-9]/g, '\\$&')}"]`,
-            // CSS选择器转义数字和特殊字符
-            `[data-id="${CSS.escape ? CSS.escape(nodeId) : nodeId}"]`,
-            // 更宽泛的匹配 - 匹配结尾包含nodeId的
-            `[data-id$="${nodeId}"]`,
-            `[id$="${nodeId}"]`
+            `g[data-id="${nodeId}"]`
           ];
           
           console.log('🎯 [节点搜索] 尝试的选择器列表:', selectors);
@@ -212,14 +254,19 @@ export const useScrollDetection = (containerRef, documentId, currentMindmapMode,
                 console.log(`🎯 [节点高亮] 选择器 ${index + 1} 成功匹配: ${selector} (找到 ${currentNodes.length} 个元素)`);
                 currentNodes.forEach((node, nodeIndex) => {
                   if (node && node.classList) {
-                    node.classList.add('mermaid-highlighted-node');
-                    console.log(`🎯 [节点高亮] 成功高亮节点 ${nodeIndex + 1}:`, {
-                      tagName: node.tagName,
-                      id: node.id,
-                      dataId: node.getAttribute('data-id'),
-                      className: node.className,
-                      selector: selector
-                    });
+                    // 确保添加高亮class
+                    if (!node.classList.contains('mermaid-highlighted-node')) {
+                      node.classList.add('mermaid-highlighted-node');
+                      console.log(`🎯 [节点高亮] 新增高亮节点 ${nodeIndex + 1}:`, {
+                        tagName: node.tagName,
+                        id: node.id,
+                        dataId: node.getAttribute('data-id'),
+                        className: node.className,
+                        selector: selector
+                      });
+                    } else {
+                      console.log(`🎯 [节点高亮] 节点已高亮 ${nodeIndex + 1}:`, selector);
+                    }
                   }
                 });
               } else {
@@ -283,10 +330,46 @@ export const useScrollDetection = (containerRef, documentId, currentMindmapMode,
             console.log(`🔍 [调试分析] 与 "${nodeId}" 相似的ID:`, similarIds);
             
           } else {
-            console.log(`🎯 [节点高亮] 成功找到并高亮 ${foundElements.length} 个元素`);
+            console.log(`🎯 [节点高亮] 成功找到并确保高亮 ${foundElements.length} 个元素`);
           }
           
           console.log('🎯 [节点高亮] 高亮节点完成:', nodeId);
+          
+          // 🔑 如果正在用户交互中，设置保护机制确保节点高亮不被清除
+          if (foundCurrent && isUserInteracting) {
+            console.log('🔒 [节点高亮保护] 用户交互中，设置节点高亮保护');
+            
+            // 持续确保节点高亮存在，直到用户交互结束
+            const nodeProtectionInterval = setInterval(() => {
+              if (!isUserInteracting) {
+                console.log('🔓 [节点高亮保护] 用户交互结束，取消节点高亮保护');
+                clearInterval(nodeProtectionInterval);
+                return;
+              }
+              
+              // 检查并重新应用节点高亮（如果被意外移除）
+              const nodeElements = window.document.querySelectorAll(`[data-id="${nodeId}"]`);
+              let needsReapply = false;
+              
+              nodeElements.forEach(element => {
+                if (element && !element.classList.contains('mermaid-highlighted-node')) {
+                  console.log('🔒 [节点高亮保护] 检测到节点高亮被移除，重新应用:', nodeId);
+                  element.classList.add('mermaid-highlighted-node');
+                  needsReapply = true;
+                }
+              });
+              
+              if (needsReapply) {
+                console.log('🔒 [节点高亮保护] 重新应用了节点高亮:', nodeId);
+              }
+            }, 100); // 每100ms检查一次
+            
+            // 安全防护：最多保护2秒
+            setTimeout(() => {
+              console.log('🔓 [节点高亮保护] 保护时间到期，取消保护');
+              clearInterval(nodeProtectionInterval);
+            }, 2000);
+          }
           
           // 自动确保高亮的节点可见
           if (foundCurrent && mermaidDiagramRef && mermaidDiagramRef.current) {
@@ -313,8 +396,8 @@ export const useScrollDetection = (containerRef, documentId, currentMindmapMode,
       // 立即尝试应用高亮
       applyHighlighting();
 
-      // 多次重试，处理异步渲染
-      const retryTimeouts = [100, 300, 500, 1000, 2000];
+      // 🔑 减少重试次数，避免过度操作
+      const retryTimeouts = [100, 300];
       retryTimeouts.forEach(delay => {
         setTimeout(() => {
           console.log(`🎯 [节点高亮] 延迟${delay}ms重试高亮:`, nodeId);
@@ -362,7 +445,7 @@ export const useScrollDetection = (containerRef, documentId, currentMindmapMode,
     } catch (error) {
       console.error('🎯 [节点高亮] 高亮节点时出错:', error);
     }
-  }, [previousActiveNode, mermaidDiagramRef]);
+  }, [previousActiveNode, mermaidDiagramRef, isUserInteracting]);
 
   // 高亮段落内容块
   const highlightParagraph = useCallback((blockId) => {
@@ -392,6 +475,33 @@ export const useScrollDetection = (containerRef, documentId, currentMindmapMode,
           currentBlock.classList.add('semantic-paragraph-highlighted');
           console.log('🎯 [段落高亮] 成功高亮段落:', blockId, currentBlock);
           
+          // 🔑 如果正在用户交互中，设置保护机制确保高亮不被清除
+          if (isUserInteracting) {
+            console.log('🔒 [高亮保护] 用户交互中，设置高亮保护');
+            
+            // 持续确保高亮存在，直到用户交互结束
+            const protectionInterval = setInterval(() => {
+              if (!isUserInteracting) {
+                console.log('🔓 [高亮保护] 用户交互结束，取消高亮保护');
+                clearInterval(protectionInterval);
+                return;
+              }
+              
+              // 检查并重新应用高亮（如果被意外移除）
+              const element = contentBlockRefs.current.get(blockId);
+              if (element && !element.classList.contains('semantic-paragraph-highlighted')) {
+                console.log('🔒 [高亮保护] 检测到高亮被移除，重新应用:', blockId);
+                element.classList.add('semantic-paragraph-highlighted');
+              }
+            }, 100); // 每100ms检查一次
+            
+            // 安全防护：最多保护2秒
+            setTimeout(() => {
+              console.log('🔓 [高亮保护] 保护时间到期，取消保护');
+              clearInterval(protectionInterval);
+            }, 2000);
+          }
+          
           // 确保段落可见（滚动到视图中）
           const rect = currentBlock.getBoundingClientRect();
           const viewportHeight = window.innerHeight;
@@ -411,7 +521,7 @@ export const useScrollDetection = (containerRef, documentId, currentMindmapMode,
     } catch (error) {
       console.error('🎯 [段落高亮] 高亮段落时出错:', error);
     }
-  }, []);
+  }, [isUserInteracting]);
 
   // 段落检测函数 - 专门用于检测当前阅读的段落
   const determineActiveParagraph = useCallback(() => {
@@ -449,6 +559,12 @@ export const useScrollDetection = (containerRef, documentId, currentMindmapMode,
     setActiveContentBlockId(prevId => {
       if (prevId !== currentActiveParagraphId) {
         console.log("📖 [段落检测] 活动段落变更:", prevId, "→", currentActiveParagraphId);
+        
+        // 🔑 检查用户交互锁定状态
+        if (isUserInteracting) {
+          console.log("🔒 [用户交互锁定] 用户正在交互，跳过滚动检测的高亮更新");
+          return prevId; // 保持原状态，不更新
+        }
         
         // 高亮新的活动段落
         if (currentActiveParagraphId) {
@@ -496,7 +612,7 @@ export const useScrollDetection = (containerRef, documentId, currentMindmapMode,
       }
       return prevId;
     });
-  }, [highlightParagraph, highlightMermaidNode, textToNodeMap, dynamicTextToNodeMap]);
+  }, [highlightParagraph, highlightMermaidNode, textToNodeMap, dynamicTextToNodeMap, isUserInteracting]);
 
   // 等待Mermaid图表渲染完成的检查函数 - 移到顶层作用域
   const waitForMermaidRender = useCallback(() => {
@@ -585,6 +701,12 @@ export const useScrollDetection = (containerRef, documentId, currentMindmapMode,
         setActiveContentBlockId(prevId => {
           if (prevId !== currentActiveParagraphId) {
             console.log("📜 [滚动事件] 活动段落变更:", prevId, "→", currentActiveParagraphId);
+            
+            // 🔑 检查用户交互锁定状态
+            if (isUserInteracting) {
+              console.log("🔒 [用户交互锁定] 用户正在交互，跳过滚动事件的高亮更新");
+              return prevId; // 保持原状态，不更新
+            }
             
             // 触发段落高亮和节点映射
             if (currentActiveParagraphId) {
@@ -893,198 +1015,20 @@ export const useScrollDetection = (containerRef, documentId, currentMindmapMode,
     }
   }, [documentId, dynamicNodeToTextMap, containerRef]);
 
-  // 更新动态映射函数 - 基于AI语义块的段落级映射
-  const updateDynamicMapping = useCallback((chunks, mermaidCode, nodeMapping = null) => {
-    console.log('🔗 [语义映射] 开始创建基于段落的语义块映射');
-    console.log('🔗 [语义映射] chunks数量:', chunks?.length);
-    console.log('🔗 [语义映射] mermaidCode长度:', mermaidCode?.length);
-    console.log('🔗 [语义映射] nodeMapping类型:', typeof nodeMapping);
-    console.log('🔗 [语义映射] nodeMapping内容:', nodeMapping);
-    
-    if (!mermaidCode) {
-      console.warn('🔗 [语义映射] 缺少mermaidCode，无法创建映射');
-      return;
-    }
-    
-    const newTextToNodeMap = {};
-    const newNodeToTextMap = {};
-    
-    if (nodeMapping && typeof nodeMapping === 'object') {
-      console.log('🔗 [语义映射] 基于AI语义块创建段落级映射');
-      console.log('🔗 [语义映射] nodeMapping键数量:', Object.keys(nodeMapping).length);
-      
-      // 为每个AI语义块创建映射
-      Object.entries(nodeMapping).forEach(([nodeId, nodeInfo]) => {
-        console.log(`🔗 [语义块处理] 处理节点 ${nodeId}:`, nodeInfo);
-        
-        if (nodeInfo && nodeInfo.paragraph_ids && Array.isArray(nodeInfo.paragraph_ids)) {
-          console.log(`🔗 [语义块] 节点 ${nodeId} 包含段落:`, nodeInfo.paragraph_ids);
-          
-          // 为每个段落创建到节点的映射
-          nodeInfo.paragraph_ids.forEach(paraId => {
-            if (paraId && typeof paraId === 'string') {
-              // 统一段落ID格式
-              const paragraphId = paraId.startsWith('para-') ? paraId : `para-${paraId}`;
-              
-              // 段落到节点的映射（多对一：多个段落可能对应同一个节点）
-              newTextToNodeMap[paragraphId] = nodeId;
-              
-              console.log(`📍 [段落映射创建] ${paragraphId} -> 节点 ${nodeId}`);
-            } else {
-              console.warn(`📍 [段落映射警告] 无效的段落ID:`, paraId);
-            }
-          });
-          
-          // 节点到段落组的映射（一对多：一个节点对应多个段落）
-          newNodeToTextMap[nodeId] = nodeInfo.paragraph_ids.map(paraId => 
-            paraId.startsWith('para-') ? paraId : `para-${paraId}`
-          );
-          
-          console.log(`🔗 [节点映射创建] 节点 ${nodeId} -> 段落组 [${newNodeToTextMap[nodeId].join(', ')}]`);
-        } else {
-          console.warn(`🔗 [语义块警告] 节点 ${nodeId} 缺少有效的段落ID数组:`, nodeInfo);
-        }
-      });
-      
-      console.log('🔗 [语义映射] AI语义块映射创建完成');
-      console.log('🔗 [语义映射] 段落到节点映射数量:', Object.keys(newTextToNodeMap).length);
-      console.log('🔗 [语义映射] 节点到段落映射数量:', Object.keys(newNodeToTextMap).length);
-      console.log('🔗 [语义映射] 最终段落映射表:', newTextToNodeMap);
-      console.log('🔗 [语义映射] 最终节点映射表:', newNodeToTextMap);
-    } else {
-      // 回退逻辑：基于chunks创建简单映射
-      console.log('🔗 [语义映射] 使用chunks创建回退映射');
-      
-      if (chunks && chunks.length > 0) {
-        chunks.forEach((chunk, index) => {
-          const blockId = `chunk-${index + 1}`;
-          const nodeId = String.fromCharCode(65 + index); // A, B, C...
-          
-          newTextToNodeMap[blockId] = nodeId;
-          newNodeToTextMap[nodeId] = [blockId];
-          
-          console.log(`🔗 [回退映射] 块 ${blockId} <-> 节点 ${nodeId}`);
-        });
-        
-        console.log('🔗 [回退映射] 回退映射创建完成:', newTextToNodeMap);
-      } else {
-        console.warn('🔗 [语义映射] 没有chunks数据，无法创建回退映射');
-      }
-    }
-    
-    // 更新状态
-    console.log('🔗 [状态更新] 更新动态映射状态');
-    console.log('🔗 [状态更新] 即将设置的textToNodeMap数量:', Object.keys(newTextToNodeMap).length);
-    console.log('🔗 [状态更新] 即将设置的nodeToTextMap数量:', Object.keys(newNodeToTextMap).length);
-    
-    setDynamicTextToNodeMap(newTextToNodeMap);
-    setDynamicNodeToTextMap(newNodeToTextMap);
-    
-    console.log('🔗 [语义映射] 映射创建完成');
-    console.log('🔗 [语义映射] 最终textToNodeMap:', newTextToNodeMap);
-    console.log('🔗 [语义映射] 最终nodeToTextMap:', newNodeToTextMap);
-    
-    // 保存到localStorage用于调试
-    try {
-      localStorage.setItem('debug_semanticTextToNodeMap', JSON.stringify(newTextToNodeMap));
-      localStorage.setItem('debug_semanticNodeToTextMap', JSON.stringify(newNodeToTextMap));
-      localStorage.setItem('debug_aiNodeMapping', JSON.stringify(nodeMapping));
-      console.log('💾 [调试保存] 语义映射已保存到localStorage，可通过 localStorage.getItem("debug_semanticTextToNodeMap") 查看');
-    } catch (e) {
-      console.warn('💾 [调试保存] 保存失败:', e);
-    }
-    
-    // 在状态更新后触发检测 - 使用setTimeout确保状态更新完成
-    console.log('🔗 [状态更新] 准备在状态更新后触发段落检测');
-    setTimeout(() => {
-      console.log('🔗 [状态更新] 延迟触发段落检测，当前mapping数量应该是:', Object.keys(newTextToNodeMap).length);
-      // 注意：这里由于闭包问题，需要依赖useEffect监听状态变化来触发检测
-      // determineActiveParagraph(); // 不在这里直接调用，而是依赖useEffect监听
-    }, 50);
-    
-  }, []);
-
   // 调试辅助函数
   const debugScrollDetection = useCallback(() => {
-    console.log('=== 🔍 滚动检测调试信息 ===');
-    console.log('📄 文档ID:', documentId);
-    console.log('📊 段落数量:', contentBlockRefs.current.size);
-    console.log('📋 可用段落列表:', Array.from(contentBlockRefs.current.keys()));
-    console.log('📍 当前活动段落:', activeContentBlockId);
-    
-    console.log('🗺️ 动态映射数量:', Object.keys(dynamicTextToNodeMap).length);
-    console.log('🗺️ 动态段落映射前10个:', Object.fromEntries(Object.entries(dynamicTextToNodeMap).slice(0, 10)));
-    console.log('🗺️ 动态节点映射:', dynamicNodeToTextMap);
-    
-    console.log('📖 静态映射数量:', Object.keys(textToNodeMap).length);
-    console.log('📖 静态段落映射前5个:', Object.fromEntries(Object.entries(textToNodeMap).slice(0, 5)));
-    console.log('📖 静态节点映射:', nodeToTextMap);
-    
-    // 检查DOM中的段落元素
-    const domParagraphs = window.document?.querySelectorAll('[id^="para-"], [data-para-id], [id^="text-"], [id^="chunk-"]');
-    console.log('🌐 DOM中的段落元素数量:', domParagraphs?.length || 0);
-    if (domParagraphs && domParagraphs.length > 0) {
-      const domParagraphIds = Array.from(domParagraphs).map(el => el.id || el.getAttribute('data-para-id') || el.className);
-      console.log('🌐 DOM段落ID前10个:', domParagraphIds.slice(0, 10));
-    }
-    
-    // 检查Mermaid节点
-    const mermaidNodes = window.document?.querySelectorAll('[data-id], .node');
-    console.log('🎨 Mermaid节点数量:', mermaidNodes?.length || 0);
-    if (mermaidNodes && mermaidNodes.length > 0) {
-      const nodeIds = Array.from(mermaidNodes).map(el => el.getAttribute('data-id') || el.id).filter(Boolean);
-      console.log('🎨 Mermaid节点ID列表:', [...new Set(nodeIds)]);
-    }
-    
-    // 检查当前活动段落的映射
-    if (activeContentBlockId) {
-      const hasDynamicMapping = Object.keys(dynamicTextToNodeMap).length > 0;
-      const currentMapping = hasDynamicMapping ? dynamicTextToNodeMap : textToNodeMap;
-      const mappedNode = currentMapping[activeContentBlockId];
-      console.log(`🔗 当前段落 ${activeContentBlockId} 映射到节点:`, mappedNode);
-      console.log(`🔗 使用的映射类型:`, hasDynamicMapping ? '动态' : '静态');
-      
-      if (!mappedNode) {
-        console.warn('❌ 当前段落没有对应的节点映射！');
-        console.log('💡 建议检查:', {
-          '段落ID格式': '确保段落ID格式正确（如para-1, para-2...）',
-          '映射创建': '检查updateDynamicMapping函数是否被正确调用',
-          '数据结构': '检查nodeMapping数据结构是否正确'
-        });
-        
-        // 尝试查找相似的键
-        const allKeys = Object.keys(currentMapping);
-        const similarKeys = allKeys.filter(key => 
-          key.includes(activeContentBlockId.replace('para-', '')) || 
-          activeContentBlockId.includes(key.replace('para-', ''))
-        );
-        console.log('🔍 相似的映射键:', similarKeys);
-      }
-    }
-    
-    console.log('=== 🔍 调试信息结束 ===');
-    
-    // 手动触发一次段落检测
-    console.log('🔄 手动触发段落检测...');
-    setTimeout(() => {
-      determineActiveParagraph();
-    }, 100);
-    
-    // 返回有用的调试数据
-    return {
-      documentId,
-      paragraphCount: contentBlockRefs.current.size,
-      paragraphIds: Array.from(contentBlockRefs.current.keys()),
-      activeContentBlockId,
-      dynamicMapping: { textToNodeMap: dynamicTextToNodeMap, nodeToTextMap: dynamicNodeToTextMap },
-      staticMapping: { textToNodeMap, nodeToTextMap },
-      domParagraphs: domParagraphs ? Array.from(domParagraphs).map(el => ({
-        id: el.id,
-        dataParaId: el.getAttribute('data-para-id'),
-        className: el.className
-      })) : []
-    };
-  }, [documentId, activeContentBlockId, dynamicTextToNodeMap, dynamicNodeToTextMap, textToNodeMap, nodeToTextMap, determineActiveParagraph]);
+    console.log('🔍 [调试信息] 滚动检测状态:');
+    console.log('  - 当前活动段落:', activeContentBlockId);
+    console.log('  - 当前活动章节:', activeChunkId);
+    console.log('  - 段落引用数量:', contentBlockRefs.current.size);
+    console.log('  - 章节引用数量:', sectionRefs.current.size);
+    console.log('  - 动态映射数量:', Object.keys(dynamicTextToNodeMap).length);
+    console.log('  - 静态映射数量:', Object.keys(textToNodeMap).length);
+    console.log('  - 文档ID:', documentId);
+    console.log('  - 思维导图模式:', currentMindmapMode);
+    console.log('  - 所有段落ID:', Array.from(contentBlockRefs.current.keys()));
+    console.log('  - 用户交互锁定状态:', isUserInteracting);
+  }, [activeContentBlockId, activeChunkId, dynamicTextToNodeMap, textToNodeMap, documentId, currentMindmapMode, isUserInteracting]);
 
   // 将调试函数暴露到全局window对象
   useEffect(() => {
@@ -1100,6 +1044,21 @@ export const useScrollDetection = (containerRef, documentId, currentMindmapMode,
     };
   }, [debugScrollDetection]);
 
+  // 动态映射更新函数
+  const updateDynamicMapping = useCallback((textToNodeMapping, nodeToTextMapping) => {
+    console.log('📊 [动态映射] 更新动态映射关系');
+    console.log('📊 [动态映射] 文本到节点映射项数:', Object.keys(textToNodeMapping).length);
+    console.log('📊 [动态映射] 节点到文本映射项数:', Object.keys(nodeToTextMapping).length);
+    
+    setDynamicTextToNodeMap(textToNodeMapping);
+    setDynamicNodeToTextMap(nodeToTextMapping);
+    
+    console.log('📊 [动态映射] 示例映射条目:');
+    Object.keys(textToNodeMapping).slice(0, 3).forEach(textId => {
+      console.log(`  ${textId} -> ${textToNodeMapping[textId]}`);
+    });
+  }, []);
+
   return {
     activeChunkId,
     activeContentBlockId,
@@ -1114,6 +1073,8 @@ export const useScrollDetection = (containerRef, documentId, currentMindmapMode,
     dynamicMapping: { textToNodeMap: dynamicTextToNodeMap, nodeToTextMap: dynamicNodeToTextMap }, // 暴露动态映射关系
     nodeToTextMap, // 暴露静态映射关系供外部使用
     textToNodeMap,  // 暴露静态映射关系供外部使用
-    debugScrollDetection // 暴露调试函数
+    debugScrollDetection, // 暴露调试函数
+    setActiveContentBlockId, // 🔑 暴露状态设置函数供外部直接调用
+    lockUserInteraction // 🔑 暴露用户交互锁定函数
   };
 }; 
