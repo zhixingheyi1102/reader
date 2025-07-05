@@ -73,27 +73,6 @@ const nodeToTextMap = {
 };
 
 export const useScrollDetection = (containerRef, documentId, currentMindmapMode, mermaidDiagramRef) => {
-  // 用户交互锁定状态 - 防止滚动检测干扰用户点击
-  const [isUserInteracting, setIsUserInteracting] = useState(false);
-  const userInteractionTimeoutRef = useRef(null);
-
-  // 🔑 锁定用户交互状态，防止滚动检测干扰
-  const lockUserInteraction = useCallback((duration = 1000) => {
-    console.log('🔒 [用户交互锁定] 锁定用户交互状态，持续时间:', duration);
-    setIsUserInteracting(true);
-    
-    // 清除之前的定时器
-    if (userInteractionTimeoutRef.current) {
-      clearTimeout(userInteractionTimeoutRef.current);
-    }
-    
-    // 设置新的定时器
-    userInteractionTimeoutRef.current = setTimeout(() => {
-      console.log('🔓 [用户交互锁定] 解除用户交互锁定');
-      setIsUserInteracting(false);
-    }, duration);
-  }, []);
-
   // 当前活动段落和节点ID的状态
   const [activeContentBlockId, setActiveContentBlockId] = useState(null);
   const [activeChunkId, setActiveChunkId] = useState(null);
@@ -335,42 +314,6 @@ export const useScrollDetection = (containerRef, documentId, currentMindmapMode,
           
           console.log('🎯 [节点高亮] 高亮节点完成:', nodeId);
           
-          // 🔑 如果正在用户交互中，设置保护机制确保节点高亮不被清除
-          if (foundCurrent && isUserInteracting) {
-            console.log('🔒 [节点高亮保护] 用户交互中，设置节点高亮保护');
-            
-            // 持续确保节点高亮存在，直到用户交互结束
-            const nodeProtectionInterval = setInterval(() => {
-              if (!isUserInteracting) {
-                console.log('🔓 [节点高亮保护] 用户交互结束，取消节点高亮保护');
-                clearInterval(nodeProtectionInterval);
-                return;
-              }
-              
-              // 检查并重新应用节点高亮（如果被意外移除）
-              const nodeElements = window.document.querySelectorAll(`[data-id="${nodeId}"]`);
-              let needsReapply = false;
-              
-              nodeElements.forEach(element => {
-                if (element && !element.classList.contains('mermaid-highlighted-node')) {
-                  console.log('🔒 [节点高亮保护] 检测到节点高亮被移除，重新应用:', nodeId);
-                  element.classList.add('mermaid-highlighted-node');
-                  needsReapply = true;
-                }
-              });
-              
-              if (needsReapply) {
-                console.log('🔒 [节点高亮保护] 重新应用了节点高亮:', nodeId);
-              }
-            }, 100); // 每100ms检查一次
-            
-            // 安全防护：最多保护2秒
-            setTimeout(() => {
-              console.log('🔓 [节点高亮保护] 保护时间到期，取消保护');
-              clearInterval(nodeProtectionInterval);
-            }, 2000);
-          }
-          
           // 自动确保高亮的节点可见
           if (foundCurrent && mermaidDiagramRef && mermaidDiagramRef.current) {
             console.log('🎯 [节点可见性] 尝试确保节点可见:', nodeId);
@@ -396,8 +339,8 @@ export const useScrollDetection = (containerRef, documentId, currentMindmapMode,
       // 立即尝试应用高亮
       applyHighlighting();
 
-      // 🔑 减少重试次数，避免过度操作
-      const retryTimeouts = [100, 300];
+      // 🔑 减少重试次数到1次，避免过度操作
+      const retryTimeouts = [100];
       retryTimeouts.forEach(delay => {
         setTimeout(() => {
           console.log(`🎯 [节点高亮] 延迟${delay}ms重试高亮:`, nodeId);
@@ -445,7 +388,7 @@ export const useScrollDetection = (containerRef, documentId, currentMindmapMode,
     } catch (error) {
       console.error('🎯 [节点高亮] 高亮节点时出错:', error);
     }
-  }, [previousActiveNode, mermaidDiagramRef, isUserInteracting]);
+  }, [previousActiveNode, mermaidDiagramRef]);
 
   // 高亮段落内容块
   const highlightParagraph = useCallback((blockId) => {
@@ -458,70 +401,62 @@ export const useScrollDetection = (containerRef, documentId, currentMindmapMode,
     try {
       console.log('🎯 [段落高亮] 开始高亮段落:', blockId);
       
-      // 移除所有之前的段落高亮样式（支持示例文档的.content-block和上传文档的.paragraph-block）
+      // 🔑 关键修复：智能高亮逻辑
       const allElements = window.document.querySelectorAll('.paragraph-block, .content-block, [id^="para-"], [data-para-id], [id^="text-"], [id^="chunk-"]');
+      console.log('🎯 [段落高亮] 找到所有段落元素数量:', allElements.length);
+      
+      // 首先检查目标段落的当前状态
+      const targetElement = contentBlockRefs.current.get(blockId);
+      const targetCurrentlyHighlighted = targetElement?.classList?.contains('semantic-paragraph-highlighted');
+      console.log('🎯 [段落高亮] 目标段落当前高亮状态:', blockId, '→', targetCurrentlyHighlighted);
+      
+      // 移除其他段落的高亮，但保护目标段落
+      let removedCount = 0;
       allElements.forEach(element => {
-        if (element && element.classList) {
-          element.classList.remove('semantic-paragraph-highlighted');
-          console.log('🎯 [段落高亮] 移除之前的高亮:', element.id || element.getAttribute('data-para-id'));
+        const elementId = element.id || element.getAttribute('data-para-id');
+        if (element && element.classList && elementId !== blockId) {
+          if (element.classList.contains('semantic-paragraph-highlighted')) {
+            element.classList.remove('semantic-paragraph-highlighted');
+            removedCount++;
+            console.log('🎯 [段落高亮] 移除其他段落的高亮:', elementId);
+          }
         }
       });
+      console.log('🎯 [段落高亮] 总共移除了', removedCount, '个段落的高亮');
 
-      // 添加新的段落高亮
-      if (blockId) {
-        const currentBlock = contentBlockRefs.current.get(blockId);
-        if (currentBlock && currentBlock.classList) {
-          // 添加段落级高亮样式
-          currentBlock.classList.add('semantic-paragraph-highlighted');
-          console.log('🎯 [段落高亮] 成功高亮段落:', blockId, currentBlock);
-          
-          // 🔑 如果正在用户交互中，设置保护机制确保高亮不被清除
-          if (isUserInteracting) {
-            console.log('🔒 [高亮保护] 用户交互中，设置高亮保护');
-            
-            // 持续确保高亮存在，直到用户交互结束
-            const protectionInterval = setInterval(() => {
-              if (!isUserInteracting) {
-                console.log('🔓 [高亮保护] 用户交互结束，取消高亮保护');
-                clearInterval(protectionInterval);
-                return;
-              }
-              
-              // 检查并重新应用高亮（如果被意外移除）
-              const element = contentBlockRefs.current.get(blockId);
-              if (element && !element.classList.contains('semantic-paragraph-highlighted')) {
-                console.log('🔒 [高亮保护] 检测到高亮被移除，重新应用:', blockId);
-                element.classList.add('semantic-paragraph-highlighted');
-              }
-            }, 100); // 每100ms检查一次
-            
-            // 安全防护：最多保护2秒
-            setTimeout(() => {
-              console.log('🔓 [高亮保护] 保护时间到期，取消保护');
-              clearInterval(protectionInterval);
-            }, 2000);
-          }
-          
-          // 确保段落可见（滚动到视图中）
-          const rect = currentBlock.getBoundingClientRect();
-          const viewportHeight = window.innerHeight;
-          const isVisible = rect.top >= 0 && rect.bottom <= viewportHeight;
-          
-          if (!isVisible) {
-            console.log('🎯 [段落高亮] 段落不完全可见，滚动到视图中');
-            currentBlock.scrollIntoView({ 
-              behavior: 'smooth', 
-              block: 'center' 
-            });
-          }
+      // 确保目标段落被高亮
+      if (blockId && targetElement) {
+        if (!targetElement.classList.contains('semantic-paragraph-highlighted')) {
+          targetElement.classList.add('semantic-paragraph-highlighted');
+          console.log('🎯 [段落高亮] ✅ 成功高亮目标段落:', blockId);
         } else {
-          console.warn('🎯 [段落高亮] 未找到段落元素:', blockId, 'contentBlockRefs中的所有键:', Array.from(contentBlockRefs.current.keys()));
+          console.log('🎯 [段落高亮] ✅ 目标段落已高亮，状态保持:', blockId);
         }
+        
+        // 验证高亮状态
+        const finalHighlighted = targetElement.classList.contains('semantic-paragraph-highlighted');
+        console.log('🎯 [段落高亮] 最终验证 - 目标段落高亮状态:', blockId, '→', finalHighlighted);
+        
+        // 确保段落可见（滚动到视图中）
+        const rect = targetElement.getBoundingClientRect();
+        const viewportHeight = window.innerHeight;
+        const isVisible = rect.top >= 0 && rect.bottom <= viewportHeight;
+        
+        if (!isVisible) {
+          console.log('🎯 [段落高亮] 段落不完全可见，滚动到视图中');
+          targetElement.scrollIntoView({ 
+            behavior: 'smooth', 
+            block: 'center' 
+          });
+        }
+      } else {
+        console.warn('🎯 [段落高亮] ❌ 未找到目标段落元素:', blockId);
+        console.warn('🎯 [段落高亮] contentBlockRefs中的所有键:', Array.from(contentBlockRefs.current.keys()));
       }
     } catch (error) {
       console.error('🎯 [段落高亮] 高亮段落时出错:', error);
     }
-  }, [isUserInteracting]);
+  }, []);
 
   // 段落检测函数 - 专门用于检测当前阅读的段落
   const determineActiveParagraph = useCallback(() => {
@@ -557,62 +492,58 @@ export const useScrollDetection = (containerRef, documentId, currentMindmapMode,
 
     // 更新活动段落状态
     setActiveContentBlockId(prevId => {
-      if (prevId !== currentActiveParagraphId) {
-        console.log("📖 [段落检测] 活动段落变更:", prevId, "→", currentActiveParagraphId);
-        
-        // 🔑 检查用户交互锁定状态
-        if (isUserInteracting) {
-          console.log("🔒 [用户交互锁定] 用户正在交互，跳过滚动检测的高亮更新");
-          return prevId; // 保持原状态，不更新
+      // 🔑 关键修复：无论段落是否变更，都要确保高亮状态正确
+      if (currentActiveParagraphId) {
+        if (prevId !== currentActiveParagraphId) {
+          console.log("📖 [段落检测] 活动段落变更:", prevId, "→", currentActiveParagraphId);
+        } else {
+          console.log("📖 [段落检测] 段落未变更，但确保高亮状态正确:", currentActiveParagraphId);
         }
         
-        // 高亮新的活动段落
-        if (currentActiveParagraphId) {
-          highlightParagraph(currentActiveParagraphId);
+        // 🔑 无论段落是否变更，都要确保高亮正确
+        highlightParagraph(currentActiveParagraphId);
+        
+        // 优先使用动态映射，只有在动态映射为空时才使用静态映射
+        const hasDynamicMapping = Object.keys(dynamicTextToNodeMap).length > 0;
+        const currentTextToNodeMap = hasDynamicMapping ? dynamicTextToNodeMap : textToNodeMap;
+        const nodeId = currentTextToNodeMap[currentActiveParagraphId];
+        
+        console.log('🔍 [节点映射检查] 段落ID:', currentActiveParagraphId);
+        console.log('🔍 [节点映射检查] 动态映射数量:', Object.keys(dynamicTextToNodeMap).length);
+        console.log('🔍 [节点映射检查] 静态映射数量:', Object.keys(textToNodeMap).length);
+        console.log('🔍 [节点映射检查] 使用映射类型:', hasDynamicMapping ? '动态映射' : '静态映射');
+        console.log('🔍 [节点映射检查] 映射表前5个键:', Object.keys(currentTextToNodeMap).slice(0, 5));
+        console.log('🔍 [节点映射检查] 找到节点ID:', nodeId);
+        
+        if (nodeId) {
+          console.log('📖 [段落检测] ✅ 找到对应节点，开始高亮:', nodeId);
+          highlightMermaidNode(nodeId);
+        } else {
+          console.warn('📖 [段落检测] ❌ 未找到段落对应的节点映射:', currentActiveParagraphId);
           
-          // 优先使用动态映射，只有在动态映射为空时才使用静态映射
-          const hasDynamicMapping = Object.keys(dynamicTextToNodeMap).length > 0;
-          const currentTextToNodeMap = hasDynamicMapping ? dynamicTextToNodeMap : textToNodeMap;
-          const nodeId = currentTextToNodeMap[currentActiveParagraphId];
-          
-          console.log('🔍 [节点映射检查] 段落ID:', currentActiveParagraphId);
-          console.log('🔍 [节点映射检查] 动态映射数量:', Object.keys(dynamicTextToNodeMap).length);
-          console.log('🔍 [节点映射检查] 静态映射数量:', Object.keys(textToNodeMap).length);
-          console.log('🔍 [节点映射检查] 使用映射类型:', hasDynamicMapping ? '动态映射' : '静态映射');
-          console.log('🔍 [节点映射检查] 映射表前5个键:', Object.keys(currentTextToNodeMap).slice(0, 5));
-          console.log('🔍 [节点映射检查] 找到节点ID:', nodeId);
-          
-          if (nodeId) {
-            console.log('📖 [段落检测] ✅ 找到对应节点，开始高亮:', nodeId);
-            highlightMermaidNode(nodeId);
+          // 详细调试信息
+          if (hasDynamicMapping) {
+            console.log('🔍 [调试] 动态映射详情:', dynamicTextToNodeMap);
+            // 检查是否存在类似的键
+            const similarKeys = Object.keys(dynamicTextToNodeMap).filter(key => 
+              key.includes(currentActiveParagraphId.replace('para-', '')) || 
+              currentActiveParagraphId.includes(key.replace('para-', ''))
+            );
+            console.log('🔍 [调试] 相似的键:', similarKeys);
           } else {
-            console.warn('📖 [段落检测] ❌ 未找到段落对应的节点映射:', currentActiveParagraphId);
-            
-            // 详细调试信息
-            if (hasDynamicMapping) {
-              console.log('🔍 [调试] 动态映射详情:', dynamicTextToNodeMap);
-              // 检查是否存在类似的键
-              const similarKeys = Object.keys(dynamicTextToNodeMap).filter(key => 
-                key.includes(currentActiveParagraphId.replace('para-', '')) || 
-                currentActiveParagraphId.includes(key.replace('para-', ''))
-              );
-              console.log('🔍 [调试] 相似的键:', similarKeys);
-            } else {
-              console.log('🔍 [调试] 静态映射详情:', Object.keys(textToNodeMap));
-            }
-            
-            // 如果是上传模式且没有找到映射，这是一个问题
-            if (currentActiveParagraphId.startsWith('para-') && !hasDynamicMapping) {
-              console.error('❌ [严重错误] 上传文档使用了静态映射！动态映射应该已经创建');
-            }
+            console.log('🔍 [调试] 静态映射详情:', Object.keys(textToNodeMap));
+          }
+          
+          // 如果是上传模式且没有找到映射，这是一个问题
+          if (currentActiveParagraphId.startsWith('para-') && !hasDynamicMapping) {
+            console.error('❌ [严重错误] 上传文档使用了静态映射！动态映射应该已经创建');
           }
         }
-        
-        return currentActiveParagraphId;
       }
-      return prevId;
+      
+      return currentActiveParagraphId;
     });
-  }, [highlightParagraph, highlightMermaidNode, textToNodeMap, dynamicTextToNodeMap, isUserInteracting]);
+  }, [highlightParagraph, highlightMermaidNode, textToNodeMap, dynamicTextToNodeMap]);
 
   // 等待Mermaid图表渲染完成的检查函数 - 移到顶层作用域
   const waitForMermaidRender = useCallback(() => {
@@ -668,80 +599,12 @@ export const useScrollDetection = (containerRef, documentId, currentMindmapMode,
     console.log('🔧 [段落滚动检测] 当前动态映射数量:', Object.keys(dynamicTextToNodeMap).length);
     console.log('🔧 [段落滚动检测] 当前静态映射数量:', Object.keys(textToNodeMap).length);
     
-    // 创建节流处理函数 - 直接使用最新的状态引用，避免闭包问题
+    // 🔑 简化滚动处理：只调用统一的检测函数，避免重复逻辑
     const throttledHandler = throttle(() => {
       if (contentBlockRefs.current.size > 0) {
         console.log('📜 [滚动事件] 触发段落检测，当前段落数量:', contentBlockRefs.current.size);
-        console.log('📜 [滚动事件] 可用段落列表:', Array.from(contentBlockRefs.current.keys()));
-        
-        // 直接调用最新的段落检测逻辑，避免闭包问题
-        const viewportHeight = window.innerHeight;
-        const anchorY = viewportHeight * 0.4;
-
-        let currentActiveParagraphId = null;
-        let bestDistance = Infinity;
-
-        contentBlockRefs.current.forEach((element, blockId) => {
-          const rect = element.getBoundingClientRect();
-          const paragraphCenter = rect.top + rect.height / 2;
-          const distance = Math.abs(paragraphCenter - anchorY);
-          
-          console.log(`📜 [滚动检测] 段落 ${blockId}: top=${rect.top.toFixed(1)}, center=${paragraphCenter.toFixed(1)}, distance=${distance.toFixed(1)}`);
-          
-          if (rect.top < viewportHeight && rect.bottom > 0 && distance < bestDistance) {
-            currentActiveParagraphId = blockId;
-            bestDistance = distance;
-            console.log(`📜 [滚动检测] 段落 ${blockId} 成为最佳候选`);
-          }
-        });
-
-        console.log(`📜 [滚动事件] 检测结果: ${currentActiveParagraphId}`);
-
-        // 直接调用状态更新
-        setActiveContentBlockId(prevId => {
-          if (prevId !== currentActiveParagraphId) {
-            console.log("📜 [滚动事件] 活动段落变更:", prevId, "→", currentActiveParagraphId);
-            
-            // 🔑 检查用户交互锁定状态
-            if (isUserInteracting) {
-              console.log("🔒 [用户交互锁定] 用户正在交互，跳过滚动事件的高亮更新");
-              return prevId; // 保持原状态，不更新
-            }
-            
-            // 触发段落高亮和节点映射
-            if (currentActiveParagraphId) {
-              // 异步调用高亮函数，避免状态更新冲突
-              setTimeout(() => {
-                // 段落高亮
-                const currentBlock = contentBlockRefs.current.get(currentActiveParagraphId);
-                if (currentBlock) {
-                  // 移除所有之前的高亮
-                  const allElements = window.document.querySelectorAll('.paragraph-block, .content-block, [id^="para-"], [data-para-id], [id^="text-"], [id^="chunk-"]');
-                  allElements.forEach(element => {
-                    if (element && element.classList) {
-                      element.classList.remove('semantic-paragraph-highlighted');
-                    }
-                  });
-                  
-                  // 添加新高亮
-                  currentBlock.classList.add('semantic-paragraph-highlighted');
-                  console.log('📜 [滚动事件] 成功高亮段落:', currentActiveParagraphId);
-                }
-                
-                // 节点映射和高亮 - 直接调用determineActiveParagraph中的逻辑
-                console.log('📜 [滚动节点映射] 开始处理节点映射');
-                
-                // 重新调用determineActiveParagraph来确保使用最新状态
-                setTimeout(() => {
-                  determineActiveParagraph();
-                }, 50);
-              }, 0);
-            }
-            
-            return currentActiveParagraphId;
-          }
-          return prevId;
-        });
+        // 直接调用统一的段落检测函数，避免重复实现
+        determineActiveParagraph();
       } else {
         console.log('📜 [滚动事件] 没有可用的段落进行检测');
       }
@@ -810,7 +673,7 @@ export const useScrollDetection = (containerRef, documentId, currentMindmapMode,
       }
       window.removeEventListener('resize', throttledHandler);
     };
-  }, [documentId, determineActiveParagraph]); // 添加determineActiveParagraph作为依赖
+  }, [documentId, determineActiveParagraph]); // 只依赖determineActiveParagraph函数
 
   // 统一的初始化检测 - 在内容加载完成后启动
   useEffect(() => {
@@ -979,6 +842,13 @@ export const useScrollDetection = (containerRef, documentId, currentMindmapMode,
             top: Math.max(0, scrollTo), // 确保不滚动到负数位置
             behavior: 'smooth'
           });
+          
+          // 🔑 滚动完成后立即触发段落检测，确保高亮快速响应
+          setTimeout(() => {
+            console.log('📜 [滚动完成] 触发段落检测以更新高亮');
+            determineActiveParagraph();
+          }, 200); // 减少延迟，提高响应速度
+          
         } else {
           // 回退到窗口滚动
           console.log('📜 [滚动计算] 未找到容器，使用window滚动');
@@ -999,10 +869,16 @@ export const useScrollDetection = (containerRef, documentId, currentMindmapMode,
             top: Math.max(0, scrollTo), // 确保不滚动到负数位置
             behavior: 'smooth'
           });
+          
+          // 🔑 滚动完成后立即触发段落检测，确保高亮快速响应
+          setTimeout(() => {
+            console.log('📜 [滚动完成] 触发段落检测以更新高亮');
+            determineActiveParagraph();
+          }, 200); // 减少延迟，提高响应速度
         }
       }
       
-      console.log('📜 [语义块滚动] 滚动完成（不进行高亮）');
+      console.log('📜 [语义块滚动] 滚动完成，段落检测将自动处理高亮');
     } else {
       console.warn('📜 [语义块滚动] 未找到任何目标元素');
       console.log('📜 [语义块滚动] 可用的内容块:', Array.from(contentBlockRefs.current.keys()));
@@ -1013,7 +889,7 @@ export const useScrollDetection = (containerRef, documentId, currentMindmapMode,
         console.log('📜 [语义块滚动] DOM中的段落元素:', Array.from(allParaElements).map(el => el.id || el.getAttribute('data-para-id')));
       }
     }
-  }, [documentId, dynamicNodeToTextMap, containerRef]);
+  }, [documentId, dynamicNodeToTextMap, containerRef, determineActiveParagraph]);
 
   // 调试辅助函数
   const debugScrollDetection = useCallback(() => {
@@ -1027,8 +903,7 @@ export const useScrollDetection = (containerRef, documentId, currentMindmapMode,
     console.log('  - 文档ID:', documentId);
     console.log('  - 思维导图模式:', currentMindmapMode);
     console.log('  - 所有段落ID:', Array.from(contentBlockRefs.current.keys()));
-    console.log('  - 用户交互锁定状态:', isUserInteracting);
-  }, [activeContentBlockId, activeChunkId, dynamicTextToNodeMap, textToNodeMap, documentId, currentMindmapMode, isUserInteracting]);
+  }, [activeContentBlockId, activeChunkId, dynamicTextToNodeMap, textToNodeMap, documentId, currentMindmapMode]);
 
   // 将调试函数暴露到全局window对象
   useEffect(() => {
@@ -1075,6 +950,5 @@ export const useScrollDetection = (containerRef, documentId, currentMindmapMode,
     textToNodeMap,  // 暴露静态映射关系供外部使用
     debugScrollDetection, // 暴露调试函数
     setActiveContentBlockId, // 🔑 暴露状态设置函数供外部直接调用
-    lockUserInteraction // 🔑 暴露用户交互锁定函数
   };
 }; 

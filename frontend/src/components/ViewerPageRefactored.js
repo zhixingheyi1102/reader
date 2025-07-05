@@ -80,8 +80,7 @@ const ViewerPageRefactored = () => {
     updateDynamicMapping,
     dynamicMapping,
     textToNodeMap, // 添加静态映射关系
-    setActiveContentBlockId, // 🔑 添加状态设置函数
-    lockUserInteraction // 🔑 添加用户交互锁定函数
+    setActiveContentBlockId // 🔑 添加状态设置函数
   } = useScrollDetection(
     containerRef,
     documentId,
@@ -112,46 +111,17 @@ const ViewerPageRefactored = () => {
   const handleNodeClick = useCallback((nodeId) => {
     console.log('🖱️ [父组件] 接收到节点点击事件:', nodeId);
     
-    // 🔑 锁定用户交互状态，防止滚动检测干扰
-    lockUserInteraction(1000); // 锁定1秒
+    // 🔑 方案1：点击只负责导航，不负责高亮
+    // 高亮由滚动检测系统统一管理，确保状态一致
+    console.log('🖱️ [点击导航] 滚动到对应文本块，高亮由滚动检测自动处理');
     
-    // 🔑 立即更新高亮状态，不依赖滚动检测
-    // 优先使用动态映射，如果没有则使用静态映射
-    const hasDynamicMapping = Object.keys(dynamicMapping.textToNodeMap).length > 0;
-    const currentNodeToTextMap = hasDynamicMapping ? dynamicMapping.nodeToTextMap : 
-      Object.keys(textToNodeMap).reduce((acc, textId) => {
-        const nodeId = textToNodeMap[textId];
-        if (!acc[nodeId]) acc[nodeId] = [];
-        acc[nodeId].push(textId);
-        return acc;
-      }, {});
-    
-    const targetParagraphs = currentNodeToTextMap[nodeId];
-    if (targetParagraphs && targetParagraphs.length > 0) {
-      const primaryParagraph = Array.isArray(targetParagraphs) ? targetParagraphs[0] : targetParagraphs;
-      console.log('🖱️ [直接高亮] 立即高亮段落:', primaryParagraph, '对应节点:', nodeId);
-      
-      // 直接调用高亮函数，确保立即响应
-      highlightParagraph(primaryParagraph);
-      highlightMermaidNode(nodeId);
-      
-      // 更新 activeContentBlockId 状态，确保状态同步
-      // 使用 setTimeout 确保在滚动之前完成状态更新
-      setTimeout(() => {
-        setActiveContentBlockId(primaryParagraph);
-      }, 0);
-    }
-    
-    // 滚动到对应文本块
+    // 滚动到对应文本块，滚动完成后滚动检测会自动处理高亮
     scrollToContentBlock(nodeId);
-  }, [scrollToContentBlock, dynamicMapping, textToNodeMap, highlightParagraph, highlightMermaidNode, setActiveContentBlockId, lockUserInteraction]);
+  }, [scrollToContentBlock]);
 
   // 🔑 新增：处理节点标签更新的回调函数
   const handleNodeLabelUpdate = useCallback((nodeId, newLabel) => {
     console.log('📝 [节点标签更新] 同步更新document状态:', nodeId, '->', newLabel);
-    
-    // 🔑 锁定用户交互状态，防止滚动检测干扰
-    lockUserInteraction(500); // 锁定0.5秒
     
     // 同步更新document.node_mappings_demo中的对应节点标签
     setDocument(prevDoc => {
@@ -176,7 +146,7 @@ const ViewerPageRefactored = () => {
         node_mappings_demo: newNodeMappings 
       };
     });
-  }, [setDocument, lockUserInteraction]);
+  }, [setDocument]);
 
   // 创建动态映射的辅助函数
   const createDynamicMapping = useCallback((chunks, mermaidCode, nodeMapping) => {
@@ -407,9 +377,6 @@ const ViewerPageRefactored = () => {
     try {
       console.log('🆕 [父组件] 添加子节点:', parentNodeId);
       
-      // 🔑 锁定用户交互状态，防止滚动检测干扰
-      lockUserInteraction(500); // 锁定0.5秒
-      
       // 生成新节点ID和边ID（使用时间戳确保唯一性）
       const newNodeId = `node_${Date.now()}`;
       const newEdgeId = `edge_${parentNodeId}_${newNodeId}`;
@@ -470,15 +437,12 @@ const ViewerPageRefactored = () => {
     } catch (error) {
       console.error('❌ [父组件] 添加子节点失败:', error);
     }
-  }, [documentId, setDocument, lockUserInteraction]);
+  }, [documentId, setDocument]);
   
   // 🔑 新增：添加同级节点的回调函数
   const handleAddSiblingNode = useCallback(async (siblingNodeId) => {
     try {
       console.log('🆕 [父组件] 添加同级节点:', siblingNodeId);
-      
-      // 🔑 锁定用户交互状态，防止滚动检测干扰
-      lockUserInteraction(500); // 锁定0.5秒
       
       // 从当前document的edges中找到同级节点的父节点
       const parentEdge = document?.edges?.find(edge => edge.target === siblingNodeId);
@@ -509,7 +473,7 @@ const ViewerPageRefactored = () => {
     } catch (error) {
       console.error('❌ [父组件] 添加同级节点失败:', error);
     }
-  }, [document, lockUserInteraction]);
+  }, [document]);
   
   // 添加同级节点的辅助函数
   const addSiblingWithParent = useCallback(async (siblingNodeId, parentNodeId) => {
@@ -566,9 +530,6 @@ const ViewerPageRefactored = () => {
     try {
       console.log('🗑️ [父组件] 删除节点:', nodeIdToDelete);
       
-      // 🔑 锁定用户交互状态，防止滚动检测干扰
-      lockUserInteraction(500); // 锁定0.5秒
-      
       // 更新document状态
       setDocument(prevDoc => {
         if (!prevDoc) {
@@ -620,7 +581,7 @@ const ViewerPageRefactored = () => {
     } catch (error) {
       console.error('❌ [父组件] 删除节点失败:', error);
     }
-  }, [documentId, setDocument, lockUserInteraction]);
+  }, [documentId, setDocument]);
 
   // 处理 node_mappings 更新的函数
   const handleNodeMappingUpdate = useCallback(async (newNodeMappings) => {

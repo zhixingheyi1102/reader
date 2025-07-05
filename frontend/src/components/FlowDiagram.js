@@ -184,82 +184,66 @@ const FlowDiagramInner = ({
   const applyNodeHighlighting = useCallback((nodeIdToHighlight) => {
     console.log('🎯 [非破坏性高亮] 开始应用节点高亮:', nodeIdToHighlight);
     
+    // 🔑 优化：使用更稳定的查找方式，避免在拖拽时失效
+    const findNodeElement = (nodeId) => {
+      // 策略1：直接通过data-id属性查找
+      let nodeElement = document.querySelector(`[data-id="${nodeId}"]`);
+      if (nodeElement) {
+        console.log('🎯 [节点查找] 策略1成功 - data-id:', nodeId);
+        return nodeElement;
+      }
+      
+      // 策略2：查找React Flow节点容器
+      nodeElement = document.querySelector(`.react-flow__node[data-id="${nodeId}"]`);
+      if (nodeElement) {
+        console.log('🎯 [节点查找] 策略2成功 - react-flow__node:', nodeId);
+        return nodeElement;
+      }
+      
+      // 策略3：遍历所有React Flow节点
+      const allNodes = document.querySelectorAll('.react-flow__node');
+      for (const node of allNodes) {
+        const dataId = node.getAttribute('data-id');
+        if (dataId === nodeId) {
+          console.log('🎯 [节点查找] 策略3成功 - 遍历匹配:', nodeId);
+          return node;
+        }
+        
+        // 检查子元素
+        const childMatch = node.querySelector(`[data-id="${nodeId}"]`);
+        if (childMatch) {
+          console.log('🎯 [节点查找] 策略3成功 - 子元素匹配:', nodeId);
+          return node;
+        }
+      }
+      
+      console.warn('🎯 [节点查找] 所有策略都失败了:', nodeId);
+      return null;
+    };
+    
     // 移除所有现有高亮
     const allNodes = document.querySelectorAll('.react-flow__node');
     allNodes.forEach(nodeElement => {
       nodeElement.classList.remove('highlighted-node');
     });
+    console.log('🎯 [非破坏性高亮] 清除了所有现有高亮');
     
     // 如果有指定的节点ID，添加高亮
     if (nodeIdToHighlight) {
-      console.log('🎯 [非破坏性高亮] 查找节点ID:', nodeIdToHighlight);
+      const foundNode = findNodeElement(nodeIdToHighlight);
       
-      // 多种选择器策略，提高找到节点的成功率
-      const selectors = [
-        `[data-id="${nodeIdToHighlight}"]`,
-        `.react-flow__node[data-id="${nodeIdToHighlight}"]`,
-        `#node-${nodeIdToHighlight}`,
-        `.react-flow__node:has([data-id="${nodeIdToHighlight}"])`,
-      ];
-      
-      let foundNode = null;
-      
-      // 尝试各种选择器
-      for (const selector of selectors) {
-        try {
-          foundNode = document.querySelector(selector);
-          if (foundNode) {
-            console.log('🎯 [非破坏性高亮] 使用选择器成功找到节点:', selector);
-            break;
-          }
-        } catch (error) {
-          console.warn('🎯 [非破坏性高亮] 选择器出错:', selector, error);
-        }
-      }
-      
-      // 如果直接选择器没找到，尝试遍历所有React Flow节点
-      if (!foundNode) {
-        console.log('🎯 [非破坏性高亮] 直接选择器未找到，开始遍历所有节点');
-        const allReactFlowNodes = document.querySelectorAll('.react-flow__node');
-        console.log('🎯 [调试] 当前页面中的React Flow节点数量:', allReactFlowNodes.length);
-        
-        allReactFlowNodes.forEach((nodeEl, index) => {
-          // 检查节点的data-id属性
-          const dataId = nodeEl.getAttribute('data-id');
-          console.log(`🎯 [调试] 节点 ${index}: data-id="${dataId}"`);
-          
-          if (dataId === nodeIdToHighlight) {
-            foundNode = nodeEl;
-            console.log('🎯 [非破坏性高亮] 通过遍历找到匹配节点:', nodeIdToHighlight);
-            return;
-          }
-          
-          // 检查子元素中是否有匹配的data-id
-          const childWithDataId = nodeEl.querySelector(`[data-id="${nodeIdToHighlight}"]`);
-          if (childWithDataId) {
-            foundNode = nodeEl;
-            console.log('🎯 [非破坏性高亮] 通过子元素找到匹配节点:', nodeIdToHighlight);
-            return;
-          }
-          
-          // 检查EditableNode组件的data属性
-          const editableNode = nodeEl.querySelector('.editable-node');
-          if (editableNode) {
-            const nodeData = editableNode.getAttribute('data-node-id') || 
-                           editableNode.parentElement?.getAttribute('data-id');
-            if (nodeData === nodeIdToHighlight) {
-              foundNode = nodeEl;
-              console.log('🎯 [非破坏性高亮] 通过EditableNode找到匹配节点:', nodeIdToHighlight);
-              return;
-            }
-          }
-        });
-      }
-      
-      // 应用高亮
       if (foundNode) {
         foundNode.classList.add('highlighted-node');
         console.log('🎯 [非破坏性高亮] ✅ 成功高亮节点:', nodeIdToHighlight);
+        
+        // 🔑 延迟检查高亮是否还在，如果不在则重新应用
+        setTimeout(() => {
+          const stillHighlighted = foundNode.classList.contains('highlighted-node');
+          if (!stillHighlighted) {
+            console.log('🎯 [高亮恢复] 检测到高亮丢失，重新应用:', nodeIdToHighlight);
+            foundNode.classList.add('highlighted-node');
+          }
+        }, 100);
         
         // 确保高亮的节点在视口中可见（可选）
         const nodeRect = foundNode.getBoundingClientRect();
@@ -304,7 +288,72 @@ const FlowDiagramInner = ({
         applyNodeHighlighting(highlightedNodeId);
       }, 100);
     }
-  }, [highlightedNodeId, nodes.length, applyNodeHighlighting]);
+  }, [highlightedNodeId, nodes, applyNodeHighlighting]); // 🔑 修复：监听整个nodes数组而不只是length
+
+  // 🔑 新增：处理ReactFlow节点变化事件，确保拖拽后重新应用高亮
+  const handleNodesChange = useCallback((changes) => {
+    console.log('🎯 [ReactFlow] 节点变化事件:', changes);
+    
+    // 调用原始的onNodesChange处理函数
+    onNodesChange(changes);
+    
+    // 🔑 优化：只在特定变化类型且有高亮节点时才处理
+    if (!highlightedNodeId) {
+      console.log('🎯 [ReactFlow] 无高亮节点，跳过高亮处理');
+      return;
+    }
+    
+    // 检查是否有需要重新应用高亮的变化
+    const needsHighlightReapply = changes.some(change => {
+      const isRelevantChange = 
+        change.type === 'position' ||     // 位置变化（拖拽）
+        change.type === 'dimensions' ||   // 尺寸变化
+        change.type === 'select' ||       // 选择状态变化
+        change.type === 'replace';        // 节点替换
+      
+      // 如果是拖拽结束事件，也需要重新应用高亮
+      const isDragEnd = change.type === 'position' && change.dragging === false;
+      
+      return isRelevantChange || isDragEnd;
+    });
+    
+    if (needsHighlightReapply) {
+      console.log('🎯 [ReactFlow] 检测到需要重新应用高亮的变化，节点:', highlightedNodeId);
+      
+      // 🔑 使用更短的延迟，提高响应速度
+      setTimeout(() => {
+        // 再次检查高亮节点ID是否仍然有效
+        if (highlightedNodeId) {
+          console.log('🎯 [ReactFlow] 执行延迟高亮重新应用:', highlightedNodeId);
+          applyNodeHighlighting(highlightedNodeId);
+        }
+      }, 50); // 减少延迟，提高响应速度
+    } else {
+      console.log('🎯 [ReactFlow] 变化不需要重新应用高亮');
+    }
+  }, [onNodesChange, highlightedNodeId, applyNodeHighlighting]);
+
+  // 🔑 新增：处理ReactFlow画布点击事件，防止高亮意外清除
+  const handlePaneClick = useCallback((event) => {
+    console.log('�� [ReactFlow] 画布点击事件，当前高亮节点:', highlightedNodeId);
+    
+    // 🔑 保持现有高亮状态，不执行任何清除操作
+    // 如果需要清除高亮，应该通过外部控制highlightedNodeId的值
+    // 这样可以确保高亮状态的管理是统一和可控的
+    
+    // 可选：在画布点击后验证高亮状态是否仍然正确
+    if (highlightedNodeId) {
+      setTimeout(() => {
+        const highlightedElement = document.querySelector(`[data-id="${highlightedNodeId}"].highlighted-node`);
+        if (!highlightedElement) {
+          console.log('🎯 [ReactFlow] 画布点击后检测到高亮丢失，重新应用:', highlightedNodeId);
+          applyNodeHighlighting(highlightedNodeId);
+        } else {
+          console.log('🎯 [ReactFlow] 画布点击后高亮状态正常');
+        }
+      }, 50);
+    }
+  }, [highlightedNodeId, applyNodeHighlighting]);
 
   // 从Mermaid代码中提取节点映射
   const extractNodeMappingsFromMermaid = (mermaidCode) => {
@@ -417,10 +466,11 @@ const FlowDiagramInner = ({
         <ReactFlow
           nodes={nodes}  // 直接使用原始节点，不再通过nodesWithHighlightClass处理
           edges={edges}
-          onNodesChange={onNodesChange}
+          onNodesChange={handleNodesChange}
           onEdgesChange={onEdgesChange}
           onConnect={onConnect}
           onNodeClick={onNodeClickHandler}
+          onPaneClick={handlePaneClick}
           nodeTypes={nodeTypes}
           connectionLineType={ConnectionLineType.SmoothStep}
           fitView
