@@ -26,215 +26,6 @@ from magic_pdf.data.dataset import PymuDocDataset
 from magic_pdf.model.doc_analyze_by_custom_model import doc_analyze
 from magic_pdf.config.enums import SupportedPdfParseMethod
 
-# ======== Phase 1: 完整的内存树数据结构 ========
-
-class NodeTreeNode:
-    """完整的树节点数据结构"""
-    def __init__(self, node_id: str):
-        self.id = node_id
-        self.children = []  # 子节点列表，按数字顺序排序
-        self.parent = None  # 父节点引用
-    
-    def add_child(self, child_node):
-        """添加子节点并维护排序"""
-        child_node.parent = self
-        self.children.append(child_node)
-        # 按数字顺序排序子节点
-        self.children.sort(key=lambda x: self._get_sort_key(x.id))
-    
-    def _get_sort_key(self, node_id: str):
-        """获取节点排序键"""
-        parts = node_id.split('.')
-        try:
-            return int(parts[-1])
-        except ValueError:
-            return 999
-    
-    def get_all_descendants(self):
-        """获取所有子孙节点"""
-        descendants = []
-        for child in self.children:
-            descendants.append(child)
-            descendants.extend(child.get_all_descendants())
-        return descendants
-    
-    def get_sibling_index(self):
-        """获取在父节点中的索引"""
-        if self.parent is None:
-            return 0
-        return self.parent.children.index(self)
-    
-    def get_siblings(self):
-        """获取所有兄弟节点（不包括自己）"""
-        if self.parent is None:
-            return []
-        return [child for child in self.parent.children if child != self]
-
-def build_tree_structure(node_mappings: Dict, mermaid_string: str) -> Dict[str, NodeTreeNode]:
-    """构建完整的内存树结构"""
-    print(f"🌳 [Phase 1] 构建树结构，节点数量: {len(node_mappings)}")
-    
-    # 第一步：创建所有节点
-    tree_nodes = {}
-    for node_id in node_mappings.keys():
-        tree_nodes[node_id] = NodeTreeNode(node_id)
-        print(f"🌳 [Phase 1] 创建节点: {node_id}")
-    
-    # 第二步：建立父子关系（基于缩进式数字ID）
-    for node_id, node in tree_nodes.items():
-        parent_prefix, sequence = split_id_helper(node_id)
-        
-        if parent_prefix is not None and parent_prefix in tree_nodes:
-            parent_node = tree_nodes[parent_prefix]
-            parent_node.add_child(node)
-            print(f"🌳 [Phase 1] 建立关系: {parent_prefix} -> {node_id}")
-    
-    # 第三步：验证和调试信息
-    root_nodes = [node for node in tree_nodes.values() if node.parent is None]
-    print(f"🌳 [Phase 1] 根节点数量: {len(root_nodes)}")
-    
-    for root in root_nodes:
-        print(f"🌳 [Phase 1] 根节点: {root.id}, 子节点: {[child.id for child in root.children]}")
-    
-    return tree_nodes
-
-def split_id_helper(node_id: str) -> tuple:
-    """将节点ID分解为父ID前缀和自己的序号"""
-    if '.' not in node_id:
-        try:
-            return (None, int(node_id))
-        except ValueError:
-            return (None, None)
-    
-    parts = node_id.split('.')
-    try:
-        sequence = int(parts[-1])
-        parent_prefix = '.'.join(parts[:-1])
-        return (parent_prefix, sequence)
-    except ValueError:
-        return (None, None)
-
-def rename_subtree(node, new_id_prefix: str) -> Dict[str, str]:
-    """连锁重命名核心函数"""
-    rename_map = {}
-    
-    def recursive_rename(current_node, new_id: str):
-        old_id = current_node.id
-        current_node.id = new_id
-        rename_map[old_id] = new_id
-        
-        for i, child in enumerate(current_node.children):
-            child_new_id = f"{new_id}.{i + 1}"
-            recursive_rename(child, child_new_id)
-    
-    recursive_rename(node, new_id_prefix)
-    return rename_map
-
-async def insert_divider_phase3(content: str, source_node_id: str, direction: str, new_node_id: str) -> Optional[str]:
-    """Phase 3专用的分割栏插入函数"""
-    try:
-        print(f"🔍 [Phase 3插入] 插入分割栏: {new_node_id}, 方向: {direction}")
-        
-        new_divider = f"--- {new_node_id} ---"
-        
-        if direction == 'child':
-            # 在源节点内容范围末尾插入
-            source_pattern = f"--- {re.escape(source_node_id)} ---"
-            source_match = re.search(source_pattern, content)
-            
-            if not source_match:
-                print(f"❌ [Phase 3插入] 未找到源节点分割栏: {source_node_id}")
-                return None
-            
-            # 找到下一个分割栏或文档末尾
-            next_divider_pattern = r"\n--- [^-]+ ---"
-            search_start = source_match.end()
-            next_match = re.search(next_divider_pattern, content[search_start:])
-            
-            if next_match:
-                insert_pos = search_start + next_match.start()
-            else:
-                insert_pos = len(content)
-            
-            return content[:insert_pos] + f"\n\n{new_divider}\n\n" + content[insert_pos:]
-            
-        elif direction == 'right-sibling':
-            # 在源节点子树末尾插入
-            source_pattern = f"--- {re.escape(source_node_id)} ---"
-            source_match = re.search(source_pattern, content)
-            
-            if not source_match:
-                return None
-            
-            # 简化处理：在下一个分割栏前插入，或文档末尾
-            next_divider_pattern = r"\n--- [^-]+ ---"
-            search_start = source_match.end()
-            next_match = re.search(next_divider_pattern, content[search_start:])
-            
-            if next_match:
-                insert_pos = search_start + next_match.start()
-            else:
-                insert_pos = len(content)
-            
-            return content[:insert_pos] + f"\n\n{new_divider}\n\n" + content[insert_pos:]
-            
-        elif direction == 'left-sibling':
-            # 在源节点分割栏前插入
-            source_pattern = f"--- {re.escape(source_node_id)} ---"
-            source_match = re.search(source_pattern, content)
-            
-            if not source_match:
-                return None
-            
-            insert_pos = source_match.start()
-            return content[:insert_pos] + f"{new_divider}\n\n" + content[insert_pos:]
-        
-        return None
-        
-    except Exception as e:
-        print(f"❌ [Phase 3插入错误] {str(e)}")
-        return None
-
-def update_mermaid_phase3(mermaid_string: str, new_node_id: str, new_node_label: str, direction: str, source_node_id: str) -> str:
-    """Phase 3专用的mermaid更新函数"""
-    try:
-        updated_mermaid = mermaid_string or "graph TD"
-        
-        if not updated_mermaid.endswith('\n'):
-            updated_mermaid += '\n'
-        
-        # 添加新节点定义
-        new_node_def = f"    {new_node_id}[{new_node_label}]"
-        updated_mermaid += new_node_def + '\n'
-        
-        # 根据方向添加连接
-        if direction == 'child':
-            connection = f"    {source_node_id} --> {new_node_id}"
-        else:
-            # 同级节点：找到源节点的父节点
-            parent_pattern = rf'([A-Za-z0-9_.]+)\s*-->\s*{re.escape(source_node_id)}'
-            parent_match = re.search(parent_pattern, updated_mermaid)
-            
-            if parent_match:
-                parent_id = parent_match.group(1)
-                connection = f"    {parent_id} --> {new_node_id}"
-            else:
-                # 如果找不到父节点，假设是根节点
-                connection = f"    ROOT --> {new_node_id}"
-        
-        updated_mermaid += connection + '\n'
-        
-        print(f"🔄 [Phase 3 Mermaid] 添加: {new_node_def}")
-        print(f"🔄 [Phase 3 Mermaid] 连接: {connection}")
-        
-        return updated_mermaid
-        
-    except Exception as e:
-        print(f"❌ [Phase 3 Mermaid错误] {str(e)}")
-        return mermaid_string or "graph TD"
-
-# ======== End of Phase 1 & Phase 3 支持函数 ========
-
 app = FastAPI(title="Argument Structure Analyzer API", version="1.0.0")
 
 # 配置CORS
@@ -1298,40 +1089,212 @@ async def generate_document_structure(document_id: str):
 
 @app.post("/api/document/{document_id}/remap")
 async def update_node_mappings(document_id: str, request_data: dict):
-    """更新节点映射关系"""
+    """更新文档的节点映射关系"""
     try:
-        print(f"🔄 [重映射] 文档 {document_id} 开始更新节点映射")
+        print(f"📍 [API] 收到节点映射更新请求 - 文档ID: {document_id}")
+        print(f"📍 [API] 新的节点映射: {request_data}")
         
+        # 验证请求数据
+        if 'node_mappings' not in request_data:
+            return JSONResponse(
+                status_code=400,
+                content={"success": False, "message": "缺少 node_mappings 参数"}
+            )
+        
+        new_node_mappings = request_data['node_mappings']
+        
+        # 检查文档是否存在
         if document_id not in document_status:
-            raise HTTPException(status_code=404, detail="文档不存在")
+            return JSONResponse(
+                status_code=404,
+                content={"success": False, "message": f"文档 {document_id} 不存在"}
+            )
         
-        # 获取新的节点映射
-        new_node_mappings = request_data.get('node_mappings', {})
-        
-        if not new_node_mappings:
-            raise HTTPException(status_code=400, detail="节点映射数据为空")
-        
-        # 更新文档状态
+        # 更新文档状态中的节点映射
         document_status[document_id]['node_mappings_demo'] = new_node_mappings
         
-        print(f"🔄 [重映射] 更新完成，新的节点数量: {len(new_node_mappings)}")
+        print(f"📍 [API] ✅ 成功更新文档 {document_id} 的节点映射")
+        print(f"📍 [API] 更新后的映射键数量: {len(new_node_mappings)}")
         
-        return JSONResponse({
+        # 可选：保存到持久化存储（这里可以添加数据库保存逻辑）
+        # TODO: 添加数据库持久化逻辑
+        
+        return JSONResponse(content={
             "success": True,
             "message": "节点映射更新成功",
-            "node_count": len(new_node_mappings)
+            "document_id": document_id,
+            "updated_mappings_count": len(new_node_mappings)
         })
         
     except Exception as e:
-        print(f"❌ [重映射错误] {str(e)}")
-        raise HTTPException(status_code=500, detail=f"更新节点映射失败: {str(e)}")
+        print(f"❌ [API错误] 更新节点映射失败: {str(e)}")
+        return JSONResponse(
+            status_code=500,
+            content={"success": False, "message": f"更新节点映射失败: {str(e)}"}
+        )
+
+def split_id(node_id: str) -> tuple:
+    """
+    将节点ID分解为父ID前缀和自己的序号
+    例如：1.2.3 -> ("1.2", 3)
+         1 -> (None, 1)
+    """
+    if '.' not in node_id:
+        # 顶级节点
+        try:
+            return (None, int(node_id))
+        except ValueError:
+            return (None, None)
+    
+    parts = node_id.split('.')
+    try:
+        sequence = int(parts[-1])
+        parent_prefix = '.'.join(parts[:-1])
+        return (parent_prefix, sequence)
+    except ValueError:
+        return (None, None)
+
+def build_node_relationship_map(node_mappings: Dict) -> Dict:
+    """
+    构建节点关系图，提供快速查找子节点和兄弟节点的能力
+    返回：{
+        'children': {parent_id: [child_ids]},
+        'siblings': {node_id: [sibling_ids]},
+        'parent': {child_id: parent_id}
+    }
+    """
+    children_map = {}
+    siblings_map = {}
+    parent_map = {}
+    
+    # 按节点ID排序，确保处理顺序一致
+    sorted_nodes = sorted(node_mappings.keys())
+    
+    for node_id in sorted_nodes:
+        parent_prefix, sequence = split_id(node_id)
+        
+        if parent_prefix is not None:
+            # 有父节点的情况
+            parent_map[node_id] = parent_prefix
+            
+            # 添加到父节点的子节点列表
+            if parent_prefix not in children_map:
+                children_map[parent_prefix] = []
+            children_map[parent_prefix].append(node_id)
+            
+            # 构建兄弟节点关系
+            if parent_prefix not in siblings_map:
+                siblings_map[parent_prefix] = []
+            siblings_map[parent_prefix].append(node_id)
+        else:
+            # 顶级节点
+            if 'root' not in children_map:
+                children_map['root'] = []
+            children_map['root'].append(node_id)
+    
+    # 为每个节点分配其兄弟节点列表
+    final_siblings_map = {}
+    for parent, siblings in siblings_map.items():
+        for sibling in siblings:
+            final_siblings_map[sibling] = [s for s in siblings if s != sibling]
+    
+    # 为顶级节点分配兄弟节点
+    if 'root' in children_map:
+        for top_node in children_map['root']:
+            final_siblings_map[top_node] = [s for s in children_map['root'] if s != top_node]
+    
+    return {
+        'children': children_map,
+        'siblings': final_siblings_map,
+        'parent': parent_map
+    }
+
+def generate_new_id(direction: str, source_node_id: str, parent_id: Optional[str], node_map: Dict) -> str:
+    """
+    根据方向和现有节点关系生成新的缩进式数字ID
+    
+    Args:
+        direction: 'child', 'left-sibling', 'right-sibling'
+        source_node_id: 源节点ID
+        parent_id: 父节点ID（用于sibling操作）
+        node_map: 节点关系图
+    
+    Returns:
+        新生成的节点ID
+    """
+    children_map = node_map['children']
+    parent_map = node_map['parent']
+    
+    if direction == 'child':
+        # 子节点：父节点ID就是source_node_id
+        parent_node_id = source_node_id
+        
+        # 查找所有该父节点的子节点
+        existing_children = children_map.get(parent_node_id, [])
+        
+        if not existing_children:
+            # 没有子节点，新ID就是 parent.1
+            return f"{parent_node_id}.1"
+        else:
+            # 找到子节点序号的最大值
+            max_sequence = 0
+            for child_id in existing_children:
+                _, sequence = split_id(child_id)
+                if sequence is not None and sequence > max_sequence:
+                    max_sequence = sequence
+            
+            # 新ID序号 = 最大序号 + 1
+            new_sequence = max_sequence + 1
+            return f"{parent_node_id}.{new_sequence}"
+    
+    elif direction in ['left-sibling', 'right-sibling']:
+        # 兄弟节点：需要找到与source_node_id相同父节点的所有节点
+        
+        # 获取源节点的父节点
+        source_parent_prefix, _ = split_id(source_node_id)
+        
+        if source_parent_prefix is None:
+            # 源节点是顶级节点，新节点也应该是顶级节点
+            existing_top_nodes = children_map.get('root', [])
+            
+            if not existing_top_nodes:
+                return "1"
+            else:
+                # 找到顶级节点序号的最大值
+                max_sequence = 0
+                for top_node_id in existing_top_nodes:
+                    _, sequence = split_id(top_node_id)
+                    if sequence is not None and sequence > max_sequence:
+                        max_sequence = sequence
+                
+                new_sequence = max_sequence + 1
+                return str(new_sequence)
+        else:
+            # 源节点有父节点，找到所有兄弟节点
+            existing_siblings = children_map.get(source_parent_prefix, [])
+            
+            if not existing_siblings:
+                return f"{source_parent_prefix}.1"
+            else:
+                # 找到兄弟节点序号的最大值
+                max_sequence = 0
+                for sibling_id in existing_siblings:
+                    _, sequence = split_id(sibling_id)
+                    if sequence is not None and sequence > max_sequence:
+                        max_sequence = sequence
+                
+                new_sequence = max_sequence + 1
+                return f"{source_parent_prefix}.{new_sequence}"
+    
+    else:
+        raise ValueError(f"不支持的方向: {direction}")
 
 @app.post("/api/document/{document_id}/node/add")
 async def add_node(document_id: str, request_data: AddNodeRequest):
-    """添加新节点到文档结构 - 使用完整的Phase 2+3逻辑"""
+    """添加新节点到文档结构"""
     try:
-        print(f"🚀 [Phase 2] 收到添加节点请求 - 文档ID: {document_id}")
-        print(f"🚀 [Phase 2] 请求参数: sourceNodeId={request_data.sourceNodeId}, direction={request_data.direction}, parentId={request_data.parentId}")
+        print(f"🆕 [API] 收到添加节点请求 - 文档ID: {document_id}")
+        print(f"🆕 [API] 请求参数: sourceNodeId={request_data.sourceNodeId}, direction={request_data.direction}, parentId={request_data.parentId}")
         
         # 检查文档是否存在
         if document_id not in document_status:
@@ -1353,251 +1316,298 @@ async def add_node(document_id: str, request_data: AddNodeRequest):
                 content={"success": False, "message": "文档内容为空或未包含段落ID"}
             )
         
-        # ======== Phase 1: 构建完整的内存树结构 ========
-        print(f"🌳 [Phase 1] 开始构建内存树结构...")
-        tree_nodes = build_tree_structure(node_mappings, mermaid_string)
+        # 🆕 解析完整的节点关系图
+        print(f"🆕 [API] 解析节点关系图...")
+        node_relationship_map = build_node_relationship_map(node_mappings)
+        print(f"🆕 [API] 节点关系图构建完成:")
+        print(f"   - 子节点映射: {node_relationship_map['children']}")
+        print(f"   - 父节点映射: {node_relationship_map['parent']}")
         
-        # 验证源节点是否存在
-        if request_data.sourceNodeId not in tree_nodes:
-            return JSONResponse(
-                status_code=400,
-                content={"success": False, "message": f"源节点 {request_data.sourceNodeId} 不存在"}
-            )
-        
-        source_node = tree_nodes[request_data.sourceNodeId]
-        print(f"🌳 [Phase 1] 源节点: {source_node.id}, 子节点数: {len(source_node.children)}")
-        
-        # ======== Phase 2: 完整的节点添加逻辑 ========
-        print(f"🚀 [Phase 2] 开始处理 direction={request_data.direction}")
-        
-        rename_map = {}  # 存储所有需要重命名的映射
-        new_node_id = ""
-        
-        if request_data.direction == 'child':
-            print(f"🚀 [Phase 2-child] 处理子节点添加")
-            # a. parentNode 就是 sourceNode
-            parent_node = source_node
-            
-            # b. 获取 parentNode.children 列表，新节点的序号是 len(children) + 1
-            new_sequence = len(parent_node.children) + 1
-            
-            # c. 生成 newNodeId (例如 1.2.3)
-            new_node_id = f"{parent_node.id}.{new_sequence}"
-            
-            # d. 此操作不触发重命名
-            print(f"🚀 [Phase 2-child] 新节点ID: {new_node_id}, 无需重命名")
-            
-        elif request_data.direction == 'right-sibling':
-            print(f"🚀 [Phase 2-right-sibling] 处理右侧同级添加")
-            
-            # a. 获取 sourceNode 的父节点 parentNode
-            parent_node = source_node.parent
-            
-            if parent_node is None:
-                # 源节点是顶级节点
-                print(f"🚀 [Phase 2-right-sibling] 源节点是顶级节点")
-                siblings = [node for node in tree_nodes.values() if node.parent is None]
-                siblings.sort(key=lambda x: split_id_helper(x.id)[1] or 0)
-                source_index = siblings.index(source_node)
-                
-                # c. 判断是否需要重命名
-                if source_index < len(siblings) - 1:
-                    print(f"🚀 [Phase 2-right-sibling] 需要重命名：源节点不是最后一个顶级节点")
-                    # d. 重命名流程：从 source_index+1 开始的所有后续兄弟节点
-                    for i in range(source_index + 1, len(siblings)):
-                        sibling = siblings[i]
-                        old_id = sibling.id
-                        old_sequence = split_id_helper(old_id)[1]
-                        new_sequence = old_sequence + 1
-                        new_sibling_id = str(new_sequence)
-                        
-                        # 使用连锁重命名函数
-                        subtree_rename_map = rename_subtree(sibling, new_sibling_id)
-                        rename_map.update(subtree_rename_map)
-                        print(f"🚀 [Phase 2-right-sibling] 重命名兄弟节点 {old_id} -> {new_sibling_id}")
-                
-                # e. 生成新节点ID
-                source_sequence = split_id_helper(source_node.id)[1]
-                new_node_id = str(source_sequence + 1)
-                
-            else:
-                # 源节点有父节点
-                print(f"🚀 [Phase 2-right-sibling] 源节点父节点: {parent_node.id}")
-                
-                # b. 在 parentNode.children 数组中找到 sourceNode 的索引 i
-                source_index = parent_node.children.index(source_node)
-                
-                # c. 判断是否需要重命名
-                if source_index < len(parent_node.children) - 1:
-                    print(f"🚀 [Phase 2-right-sibling] 需要重命名：源节点不是最后一个子节点")
-                    
-                    # d. 重命名流程：从 parentNode.children[i+1] 开始的所有后续兄弟节点
-                    for j in range(source_index + 1, len(parent_node.children)):
-                        sibling = parent_node.children[j]
-                        old_id = sibling.id
-                        _, old_sequence = split_id_helper(old_id)
-                        new_sequence = old_sequence + 1
-                        new_sibling_id = f"{parent_node.id}.{new_sequence}"
-                        
-                        # 使用连锁重命名函数
-                        subtree_rename_map = rename_subtree(sibling, new_sibling_id)
-                        rename_map.update(subtree_rename_map)
-                        print(f"🚀 [Phase 2-right-sibling] 重命名兄弟节点 {old_id} -> {new_sibling_id}")
-                
-                # e. 生成 newNodeId: 新节点的序号是原序号 + 1
-                _, source_sequence = split_id_helper(source_node.id)
-                new_node_id = f"{parent_node.id}.{source_sequence + 1}"
-                
-        elif request_data.direction == 'left-sibling':
-            print(f"🚀 [Phase 2-left-sibling] 处理左侧同级添加")
-            
-            # a. 获取 sourceNode 的父节点 parentNode
-            parent_node = source_node.parent
-            
-            # c. 新节点的ID 将是 sourceNode 当前的ID
-            new_node_id = source_node.id
-            
-            if parent_node is None:
-                # 源节点是顶级节点
-                print(f"🚀 [Phase 2-left-sibling] 源节点是顶级节点")
-                siblings = [node for node in tree_nodes.values() if node.parent is None]
-                siblings.sort(key=lambda x: split_id_helper(x.id)[1] or 0)
-                source_index = siblings.index(source_node)
-                
-                # d. 必须重命名：从 sourceNode 开始的所有节点
-                for i in range(source_index, len(siblings)):
-                    sibling = siblings[i]
-                    old_id = sibling.id
-                    old_sequence = split_id_helper(old_id)[1]
-                    new_sequence = old_sequence + 1
-                    new_sibling_id = str(new_sequence)
-                    
-                    # 使用连锁重命名函数
-                    subtree_rename_map = rename_subtree(sibling, new_sibling_id)
-                    rename_map.update(subtree_rename_map)
-                    print(f"🚀 [Phase 2-left-sibling] 重命名节点 {old_id} -> {new_sibling_id}")
-                    
-            else:
-                # 源节点有父节点
-                print(f"🚀 [Phase 2-left-sibling] 源节点父节点: {parent_node.id}")
-                
-                # b. 在 parentNode.children 数组中找到 sourceNode 的索引 i
-                source_index = parent_node.children.index(source_node)
-                
-                # d. 必须重命名：从 sourceNode (parentNode.children[i]) 开始的所有后续兄弟节点
-                for j in range(source_index, len(parent_node.children)):
-                    sibling = parent_node.children[j]
-                    old_id = sibling.id
-                    _, old_sequence = split_id_helper(old_id)
-                    new_sequence = old_sequence + 1
-                    new_sibling_id = f"{parent_node.id}.{new_sequence}"
-                    
-                    # 使用连锁重命名函数
-                    subtree_rename_map = rename_subtree(sibling, new_sibling_id)
-                    rename_map.update(subtree_rename_map)
-                    print(f"🚀 [Phase 2-left-sibling] 重命名节点 {old_id} -> {new_sibling_id}")
-        
-        else:
-            return JSONResponse(
-                status_code=400,
-                content={"success": False, "message": f"不支持的方向: {request_data.direction}"}
-            )
-        
-        print(f"🚀 [Phase 2] 完成逻辑处理")
-        print(f"🚀 [Phase 2] 新节点ID: {new_node_id}")
-        print(f"🚀 [Phase 2] 需要重命名的节点数: {len(rename_map)}")
-        print(f"🚀 [Phase 2] 重命名映射: {rename_map}")
-        
-        # ======== Phase 3: 应用变更并返回 ========
-        print(f"✨ [Phase 3] 开始应用变更...")
+        # 🆕 使用新的ID生成逻辑（缩进式数字命名法）
+        new_node_id = generate_new_id(
+            direction=request_data.direction,
+            source_node_id=request_data.sourceNodeId,
+            parent_id=request_data.parentId,
+            node_map=node_relationship_map
+        )
         
         new_node_label = request_data.label or "新节点"
         
-        # 1. 应用重命名：遍历所有数据结构，使用 rename_map 替换旧ID为新ID
-        updated_content_with_ids = content_with_ids
-        updated_node_mappings = node_mappings.copy()
-        updated_mermaid_string = mermaid_string
+        print(f"🆕 [API] 生成新节点ID: {new_node_id} (使用缩进式数字命名法)")
         
-        # 应用重命名到 content_with_ids
-        for old_id, new_id in rename_map.items():
-            old_divider = f"--- {old_id} ---"
-            new_divider = f"--- {new_id} ---"
-            updated_content_with_ids = updated_content_with_ids.replace(old_divider, new_divider)
-            print(f"✨ [Phase 3] 更新content: {old_divider} -> {new_divider}")
-        
-        # 应用重命名到 node_mappings
-        for old_id, new_id in rename_map.items():
-            if old_id in updated_node_mappings:
-                updated_node_mappings[new_id] = updated_node_mappings.pop(old_id)
-                print(f"✨ [Phase 3] 更新node_mappings: {old_id} -> {new_id}")
-        
-        # 应用重命名到 mermaid_string
-        for old_id, new_id in rename_map.items():
-            pattern = rf'\b{re.escape(old_id)}\b'
-            updated_mermaid_string = re.sub(pattern, new_id, updated_mermaid_string)
-            print(f"✨ [Phase 3] 更新mermaid: {old_id} -> {new_id}")
-        
-        # 2. 插入新节点：将新节点的分割栏插入到重命名后的 content_with_ids 中
-        updated_content_with_ids = await insert_divider_phase3(
-            updated_content_with_ids, 
+        # 解析content_with_ids以找到插入点
+        updated_content = await insert_divider_in_content(
+            content_with_ids, 
             request_data.sourceNodeId,
             request_data.direction,
-            new_node_id
+            new_node_id,
+            node_mappings
         )
         
-        if updated_content_with_ids is None:
+        if updated_content is None:
             return JSONResponse(
                 status_code=400,
                 content={"success": False, "message": "无法找到合适的插入位置"}
             )
         
-        # 添加新节点到 node_mappings
+        # 更新node_mappings
+        updated_node_mappings = node_mappings.copy()
         updated_node_mappings[new_node_id] = {
             "text_snippet": new_node_label,
             "paragraph_ids": [],
             "semantic_role": "新添加的节点"
         }
         
-        # 更新 mermaid_string，添加新节点连接
-        updated_mermaid_string = update_mermaid_phase3(
-            updated_mermaid_string,
+        # 更新mermaid_string
+        updated_mermaid = update_mermaid_string(
+            mermaid_string,
             new_node_id,
             new_node_label,
             request_data.direction,
-            request_data.sourceNodeId
+            request_data.sourceNodeId,
+            request_data.parentId
         )
         
-        # 3. 更新文档状态
+        # 更新文档状态
         document_status[document_id].update({
-            'content_with_ids': updated_content_with_ids,
+            'content_with_ids': updated_content,
             'node_mappings_demo': updated_node_mappings,
-            'mermaid_code_demo': updated_mermaid_string
+            'mermaid_code_demo': updated_mermaid
         })
         
-        print(f"✨ [Phase 3] ✅ 成功完成所有变更")
-        print(f"✨ [Phase 3] 📊 最终数据统计:")
-        print(f"   content_with_ids 长度: {len(updated_content_with_ids)} 字符")
+        print(f"🆕 [API] ✅ 成功添加节点 {new_node_id} 到文档 {document_id}")
+        print(f"🆕 [API] 📊 更新后的数据统计:")
+        print(f"   content_with_ids 长度: {len(updated_content)} 字符")
         print(f"   node_mappings 数量: {len(updated_node_mappings)}")
-        print(f"   mermaid_code 长度: {len(updated_mermaid_string)} 字符")
-        print(f"   重命名操作数: {len(rename_map)}")
+        print(f"   mermaid_code 长度: {len(updated_mermaid)} 字符")
+        print(f"🆕 [API] 📋 更新后的 content_with_ids 前200字符:")
+        print(f"   {updated_content[:200]}...")
+        
+        # 构建返回的文档数据
+        updated_document = document_status[document_id]
+        
+        # 验证关键数据是否存在
+        if not updated_document.get('content_with_ids'):
+            print(f"❌ [API] 警告: 返回数据中 content_with_ids 为空")
+        if not updated_document.get('node_mappings_demo'):
+            print(f"❌ [API] 警告: 返回数据中 node_mappings_demo 为空")
+        if not updated_document.get('mermaid_code_demo'):
+            print(f"❌ [API] 警告: 返回数据中 mermaid_code_demo 为空")
+        
+        print(f"🆕 [API] 📤 返回给前端的数据包含以下字段:")
+        print(f"   {list(updated_document.keys())}")
         
         # 返回更新后的完整文档
         return JSONResponse(content={
             "success": True,
             "message": "节点添加成功",
-            "document": document_status[document_id],
-            "new_node_id": new_node_id,
-            "rename_operations": len(rename_map)
+            "document": updated_document,
+            "new_node_id": new_node_id
         })
         
     except Exception as e:
-        print(f"❌ [Phase 2错误] 添加节点失败: {str(e)}")
-        import traceback
-        traceback.print_exc()
+        print(f"❌ [API错误] 添加节点失败: {str(e)}")
         return JSONResponse(
             status_code=500,
             content={"success": False, "message": f"添加节点失败: {str(e)}"}
         )
+
+async def insert_divider_in_content(content: str, source_node_id: str, direction: str, new_node_id: str, node_mappings: Dict) -> Optional[str]:
+    """
+    在content_with_ids中插入新的分割栏标记
+    使用精确的字符串操作，根据direction执行不同的插入策略
+    """
+    try:
+        print(f"🔍 [精确插入] 开始插入分割栏")
+        print(f"🔍 [精确插入] 源节点: {source_node_id}, 方向: {direction}, 新节点: {new_node_id}")
+        print(f"🔍 [精确插入] 内容长度: {len(content)} 字符")
+        
+        # 创建新的分割栏标记
+        new_divider = f"--- {new_node_id} ---"
+        
+        if direction == 'child':
+            # 子节点：找到 sourceNodeId 的整个内容范围的末尾，插入新分割栏
+            print(f"🔍 [精确插入-child] 处理子节点插入")
+            
+            # 找到源节点的分割栏位置
+            source_pattern = f"--- {re.escape(source_node_id)} ---"
+            source_match = re.search(source_pattern, content)
+            
+            if not source_match:
+                print(f"❌ [精确插入-child] 未找到源节点分割栏: {source_node_id}")
+                return None
+            
+            # 找到源节点内容范围的末尾（下一个分割栏的开始位置或文档末尾）
+            next_divider_pattern = r"\n--- [^-]+ ---"
+            next_match = None
+            for match in re.finditer(next_divider_pattern, content[source_match.end():]):
+                next_match = match
+                break
+            
+            if next_match:
+                # 在下一个分割栏前插入
+                insert_pos = source_match.end() + next_match.start()
+                print(f"🔍 [精确插入-child] 在位置 {insert_pos} 插入（下一个分割栏前）")
+            else:
+                # 在文档末尾插入
+                insert_pos = len(content)
+                print(f"🔍 [精确插入-child] 在位置 {insert_pos} 插入（文档末尾）")
+            
+            # 执行插入
+            updated_content = content[:insert_pos] + f"\n\n{new_divider}\n\n" + content[insert_pos:]
+            
+        elif direction == 'left-sibling':
+            # 左侧同级：在 --- sourceNodeId --- 这个子串的正前方插入
+            print(f"🔍 [精确插入-left-sibling] 处理左侧同级插入")
+            
+            source_pattern = f"--- {re.escape(source_node_id)} ---"
+            source_match = re.search(source_pattern, content)
+            
+            if not source_match:
+                print(f"❌ [精确插入-left-sibling] 未找到源节点分割栏: {source_node_id}")
+                return None
+            
+            # 在源节点分割栏正前方插入
+            insert_pos = source_match.start()
+            print(f"🔍 [精确插入-left-sibling] 在位置 {insert_pos} 插入（源节点分割栏前）")
+            
+            # 执行插入
+            updated_content = content[:insert_pos] + f"{new_divider}\n\n" + content[insert_pos:]
+            
+        elif direction == 'right-sibling':
+            # 右侧同级：构建节点树，找到子树结束位置后插入
+            print(f"🔍 [精确插入-right-sibling] 处理右侧同级插入")
+            
+            # 构建节点树结构
+            node_tree = build_node_tree_from_content(content, node_mappings)
+            if not node_tree:
+                print(f"❌ [精确插入-right-sibling] 无法构建节点树")
+                return None
+            
+            # 找到源节点及其子树的结束位置
+            subtree_end_pos = find_node_subtree_end(content, source_node_id, node_tree)
+            if subtree_end_pos is None:
+                print(f"❌ [精确插入-right-sibling] 无法找到源节点子树结束位置")
+                return None
+            
+            print(f"🔍 [精确插入-right-sibling] 在位置 {subtree_end_pos} 插入（子树末尾后）")
+            
+            # 执行插入
+            updated_content = content[:subtree_end_pos] + f"\n\n{new_divider}\n\n" + content[subtree_end_pos:]
+            
+        else:
+            print(f"❌ [精确插入] 不支持的方向: {direction}")
+            return None
+        
+        print(f"✅ [精确插入] 成功插入新分割栏，节点ID: {new_node_id}")
+        print(f"✅ [精确插入] 新内容长度: {len(updated_content)} 字符")
+        
+        # 验证插入结果
+        divider_count = len(re.findall(r'--- [^-]+ ---', updated_content))
+        print(f"✅ [精确插入] 验证：更新后找到 {divider_count} 个分割栏")
+        
+        return updated_content
+        
+    except Exception as e:
+        print(f"❌ [精确插入错误] {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return None
+
+def build_node_tree_from_content(content: str, node_mappings: Dict) -> Optional[Dict]:
+    """
+    从content_with_ids和mermaid连接关系构建节点树结构
+    
+    Returns:
+        节点树字典，格式: {node_id: {'children': [child_ids], 'position': (start, end)}}
+    """
+    try:
+        print(f"🌳 [构建节点树] 开始构建节点树")
+        
+        # 解析所有分割栏位置
+        divider_pattern = r'--- ([^-]+) ---'
+        matches = list(re.finditer(divider_pattern, content))
+        
+        if not matches:
+            print(f"🌳 [构建节点树] 没有找到分割栏")
+            return None
+        
+        # 构建节点位置映射
+        node_positions = {}
+        for i, match in enumerate(matches):
+            node_id = match.group(1).strip()
+            start_pos = match.start()
+            # 下一个分割栏的开始位置，或文档末尾
+            end_pos = matches[i + 1].start() if i + 1 < len(matches) else len(content)
+            node_positions[node_id] = (start_pos, end_pos)
+            print(f"🌳 [构建节点树] 节点 {node_id}: 位置 {start_pos}-{end_pos}")
+        
+        # 从node_mappings构建父子关系（这里简化处理，假设节点按顺序排列）
+        # 实际应该从mermaid_string解析连接关系，但这里使用位置顺序作为近似
+        node_tree = {}
+        node_ids = list(node_positions.keys())
+        
+        for i, node_id in enumerate(node_ids):
+            node_tree[node_id] = {
+                'children': [],
+                'position': node_positions[node_id],
+                'level': 0  # 简化处理，假设都是同级
+            }
+        
+        print(f"🌳 [构建节点树] 构建完成，包含 {len(node_tree)} 个节点")
+        return node_tree
+        
+    except Exception as e:
+        print(f"❌ [构建节点树错误] {str(e)}")
+        return None
+
+def find_node_subtree_end(content: str, source_node_id: str, node_tree: Dict) -> Optional[int]:
+    """
+    找到源节点及其所有子孙节点构成的子树的结束位置
+    
+    Args:
+        content: 文档内容
+        source_node_id: 源节点ID
+        node_tree: 节点树结构
+        
+    Returns:
+        子树结束位置，如果找不到则返回None
+    """
+    try:
+        print(f"🔍 [子树查找] 查找节点 {source_node_id} 的子树结束位置")
+        
+        if source_node_id not in node_tree:
+            print(f"❌ [子树查找] 节点 {source_node_id} 不在节点树中")
+            return None
+        
+        # 获取源节点的位置
+        source_position = node_tree[source_node_id]['position']
+        source_end = source_position[1]
+        
+        print(f"🔍 [子树查找] 源节点位置: {source_position}")
+        
+        # 简化实现：由于没有真正的父子关系，直接返回节点内容的结束位置
+        # 在实际实现中，应该遍历所有子节点，找到最远的子孙节点位置
+        
+        # 查找紧接在源节点后面的子节点们（基于缩进或顺序判断）
+        max_end_pos = source_end
+        
+        # 这里简化处理，假设同一级别的节点按顺序排列
+        # 实际应该解析mermaid连接关系来确定真正的父子关系
+        for node_id, node_info in node_tree.items():
+            node_start, node_end = node_info['position']
+            # 如果节点在源节点之后且是其子节点（这里简化判断）
+            if node_start > source_end:
+                # 简化：只考虑紧接着的第一个节点作为边界
+                max_end_pos = node_start
+                break
+        
+        print(f"🔍 [子树查找] 确定子树结束位置: {max_end_pos}")
+        return max_end_pos
+        
+    except Exception as e:
+        print(f"❌ [子树查找错误] {str(e)}")
+        return None
 
 def parse_content_structure(content: str, node_mappings: Dict) -> tuple:
     """解析content_with_ids的结构，返回分割栏位置和节点区域"""
@@ -1820,37 +1830,25 @@ if __name__ == "__main__":
     import uvicorn
     
     print("\n" + "=" * 80)
-    print("🎯 AI 阅读器 - 后端API服务 (完整集成版)")
+    print("🎯 智能思维导图生成器 - 后端API服务")
     print("=" * 80)
     print("📍 服务地址: http://localhost:8000")
     print("📚 API文档: http://localhost:8000/docs")
     print("🔧 服务模式: 开发模式 (支持热重载)")
     print("=" * 80)
-    print("🚀 已集成功能: 完整的节点添加系统 (Phase 2+3)")
-    print("   ✅ 完整的内存树数据结构 (NodeTreeNode)")
-    print("   ✅ 连锁重命名支持 (rename_subtree)")
-    print("   ✅ 三种添加方向: child, left-sibling, right-sibling")
-    print("   ✅ 缩进式数字ID命名 (1, 2, 1.1, 1.2, 1.1.1...)")
-    print("   ✅ 智能插入位置计算")
-    print("   ✅ 自动Mermaid图更新")
-    print("=" * 80)
     print("📋 控制台日志说明:")
     print("   📤 [文件上传] - 文件上传相关信息")
-    print("   🔄 [开始生成] - 论证结构分析任务启动")
-    print("   🤖 [AI处理] - 调用论证结构分析器")
-    print("   🌳 [Phase 1] - 内存树结构构建")
-    print("   🚀 [Phase 2] - 节点添加逻辑处理")
-    print("   ✨ [Phase 3] - 变更应用和数据更新")
-    print("   ✅ [分析完成] - 论证结构分析成功")
-    print("   ❌ [分析失败] - 分析过程出现错误")
+    print("   🔄 [开始生成] - 思维导图生成任务启动")
+    print("   🚀 [开始生成] - AI处理开始")
+    print("   🤖 [AI处理] - 调用思维导图生成器")
+    print("   ✅ [生成完成] - 思维导图生成成功")
+    print("   ❌ [生成失败] - 生成过程出现错误")
     print("   ⏳ [状态查询] - 客户端查询生成状态")
     print("=" * 80)
-    print("🎯 支持的功能:")
-    print("   📊 智能论证结构分析")
-    print("   🗂️ 文档段落自动标记")
-    print("   🌐 动态节点添加与重排序")
-    print("   📋 实时文档状态管理")
-    print("   💾 内存数据库存储")
+    print("🎯 新功能: 支持两种生成模式")
+    print("   📊 标准详细模式: 3-5分钟，详细分析，高质量结果")
+    print("   ⚡ 快速简化模式: 1-2分钟，基础结构，快速预览")
+    print("   📋 API端点: /api/generate-mindmap/{id} 和 /api/generate-mindmap-simple/{id}")
     print("=" * 80)
     print("🚀 启动服务中...")
     print("")
