@@ -8,21 +8,32 @@ import SortableParagraph from './SortableParagraph';
 import SortableDivider from './SortableDivider';
 import './DocumentRenderer.css';
 
-// 解析包含物理分割栏的内容
+// 解析段落和分割线的数据结构
 const parseContentWithDividers = (content, onContentBlockRef, nodeMapping = null) => {
   if (!content) return [];
   
-  console.log('🔧 [物理分割栏解析] 开始解析内容，长度:', content.length);
-  console.log('🔧 [物理分割栏解析] 内容前200字符:', content.substring(0, 200));
+  // 创建段落ID到节点ID的映射
+  const paragraphToNodeMap = {};
+  if (nodeMapping) {
+    Object.entries(nodeMapping).forEach(([nodeId, nodeData]) => {
+      if (nodeData.paragraph_ids && Array.isArray(nodeData.paragraph_ids)) {
+        nodeData.paragraph_ids.forEach(paragraphId => {
+          paragraphToNodeMap[paragraphId] = nodeId;
+        });
+      }
+    });
+  }
   
-  // 使用正则表达式分割内容，保留分割栏标记
-  const dividerRegex = /(--- ([A-Za-z0-9_]+) ---)/g;
-  const parts = content.split(dividerRegex).filter(part => part.trim());
+  console.log('📍 [逻辑分割] 段落到节点的映射:', paragraphToNodeMap);
   
-  console.log('🔧 [物理分割栏解析] 分割后得到', parts.length, '个部分');
+  // 按段落分割内容，保留段落ID标记
+  const paragraphs = content.split(/(\[para-\d+\])/g).filter(part => part.trim());
+  console.log('📍 [段落解析] 总段落数量:', paragraphs.length, '前5个部分:', paragraphs.slice(0, 5));
   
   const items = [];
-  let itemCounter = 0;
+  let currentParagraphId = null;
+  let currentContent = '';
+  let currentNodeId = null;
   
   // 根据语义角色设置颜色
   const getColorByRole = (role) => {
@@ -34,112 +45,103 @@ const parseContentWithDividers = (content, onContentBlockRef, nodeMapping = null
       '反驳': 'red',
       '结论': 'yellow',
       '历史案例': 'blue',
-      '理论拓展': 'purple',
-      '新添加的节点': 'orange'
+      '理论拓展': 'purple'
     };
     return roleColors[role] || 'gray';
   };
   
-  for (let i = 0; i < parts.length; i++) {
-    const part = parts[i].trim();
-    if (!part) continue;
-    
-    // 检查是否是分割栏标记
-    const dividerMatch = part.match(/^--- ([A-Za-z0-9_]+) ---$/);
-    
-    if (dividerMatch) {
-      // 这是一个分割栏
-      const nodeId = dividerMatch[1];
-      console.log('🔧 [物理分割栏解析] 发现分割栏:', nodeId);
-      
-      // 获取节点信息
-      const nodeInfo = nodeMapping && nodeMapping[nodeId] ? nodeMapping[nodeId] : null;
-      
-      items.push({
-        id: `divider-${nodeId}`,
-        type: 'divider',
-        nodeId: nodeId,
-        nodeInfo: {
-          title: nodeInfo ? (nodeInfo.text_snippet || nodeInfo.semantic_role || nodeId) : nodeId,
-          id: nodeId,
-          color: nodeInfo ? getColorByRole(nodeInfo.semantic_role) : 'gray'
-        }
-      });
-      
-    } else {
-      // 这是普通文本内容，需要解析成段落
-      console.log('🔧 [物理分割栏解析] 处理文本内容，长度:', part.length);
-      
-      // 按段落分割内容，保留段落ID标记
-      const paragraphs = part.split(/(\[para-\d+\])/g).filter(p => p.trim());
-      
-      let currentParagraphId = null;
-      let currentContent = '';
-      
-      paragraphs.forEach((paragraph) => {
-        const paraIdMatch = paragraph.match(/\[para-(\d+)\]/);
+  paragraphs.forEach((part, partIndex) => {
+    const paraIdMatch = part.match(/\[para-(\d+)\]/);
     
     if (paraIdMatch) {
       // 如果有之前的内容，先处理它
       if (currentContent.trim() && currentParagraphId) {
+        console.log(`📍 [段落解析] 创建段落数据: ${currentParagraphId}, 内容长度: ${currentContent.trim().length}`);
+        
         items.push({
           id: currentParagraphId,
           type: 'paragraph',
           paragraphId: currentParagraphId,
           content: currentContent.trim(),
-              nodeId: null, // 在物理分割栏模式下，nodeId由分割栏确定
+          nodeId: currentNodeId,
           onContentBlockRef
         });
-            console.log('🔧 [物理分割栏解析] 创建段落:', currentParagraphId, '内容长度:', currentContent.trim().length);
       }
       
       // 设置新的段落ID
-          currentParagraphId = `para-${paraIdMatch[1]}`;
+      const newParagraphId = `para-${paraIdMatch[1]}`;
+      const newNodeId = paragraphToNodeMap[newParagraphId];
+      
+      // 检查节点变化，如果节点发生变化且不是第一个段落，则插入分割线
+      if (nodeMapping && newNodeId && currentNodeId && newNodeId !== currentNodeId) {
+        const nodeInfo = nodeMapping[newNodeId];
+        if (nodeInfo) {
+          console.log(`📍 [逻辑分割] 检测到节点变化: ${currentNodeId} -> ${newNodeId}`);
+          
+          // 插入逻辑分割线
+          items.push({
+            id: `divider-${newNodeId}`,
+            type: 'divider',
+            nodeId: newNodeId,
+            nodeInfo: {
+              title: nodeInfo.text_snippet || nodeInfo.semantic_role || newNodeId,
+              id: newNodeId,
+              color: getColorByRole(nodeInfo.semantic_role)
+            }
+          });
+        }
+      }
+      
+      currentParagraphId = newParagraphId;
+      currentNodeId = newNodeId;
       currentContent = '';
       
+      console.log(`📍 [段落解析] 发现段落标记: ${currentParagraphId}, 节点ID: ${currentNodeId}`);
     } else {
       // 累积内容
-          currentContent += paragraph;
+      currentContent += part;
+      console.log(`📍 [内容累积] 当前段落: ${currentParagraphId}, 累积长度: ${currentContent.length}, 新增: ${part.substring(0, 30)}...`);
     }
   });
   
   // 处理最后一个段落
   if (currentContent.trim() && currentParagraphId) {
+    console.log(`📍 [段落解析-最后] 创建最后段落数据: ${currentParagraphId}, 内容长度: ${currentContent.trim().length}`);
+    
     items.push({
       id: currentParagraphId,
       type: 'paragraph',
       paragraphId: currentParagraphId,
       content: currentContent.trim(),
-          nodeId: null,
+      nodeId: currentNodeId,
       onContentBlockRef
     });
-        console.log('🔧 [物理分割栏解析] 创建最后段落:', currentParagraphId, '内容长度:', currentContent.trim().length);
-      }
-      
-      // 如果没有段落ID标记，将整个文本作为一个段落处理
-      if (paragraphs.length === 1 && !paragraphs[0].includes('[para-')) {
-        itemCounter++;
-        const paragraphId = `auto-para-${itemCounter}`;
-        items.push({
-          id: paragraphId,
-          type: 'paragraph',
-          paragraphId: paragraphId,
-          content: part,
-          nodeId: null,
-          onContentBlockRef
-        });
-        console.log('🔧 [物理分割栏解析] 创建自动段落:', paragraphId, '内容长度:', part.length);
-    }
-    }
   }
   
-  console.log('🔧 [物理分割栏解析] 解析完成，总共创建', items.length, '个项目');
-  console.log('🔧 [物理分割栏解析] 项目类型统计:', {
-    分割栏: items.filter(item => item.type === 'divider').length,
-    段落: items.filter(item => item.type === 'paragraph').length
+  console.log(`📍 [解析总结] 总共创建了 ${items.length} 个项目`);
+  
+  // 健壮性检查：过滤掉可能的无效元素
+  const validItems = items.filter(item => {
+    if (!item) {
+      console.warn('📍 [解析总结] ⚠️ 发现空的 item');
+      return false;
+    }
+    if (!item.id) {
+      console.warn('📍 [解析总结] ⚠️ 发现没有 id 的 item:', item);
+      return false;
+    }
+    if (!item.type) {
+      console.warn('📍 [解析总结] ⚠️ 发现没有 type 的 item:', item);
+      return false;
+    }
+    return true;
   });
   
-  return items;
+  if (validItems.length !== items.length) {
+    console.warn(`📍 [解析总结] ⚠️ 过滤掉了 ${items.length - validItems.length} 个无效项目`);
+  }
+  
+  return validItems;
 };
 
 // 渲染段落组件
@@ -259,7 +261,7 @@ const SortableContentRenderer = ({ content, onContentBlockRef, nodeMapping = nul
     useSensor(KeyboardSensor)
   );
   
-  // 拖拽结束处理函数 - 重构为计算新顺序并重新拼接字符串
+  // 拖拽结束处理函数 - 重构为只负责计算新顺序
   const handleDragEnd = useCallback((event) => {
     const { active, over } = event;
     
@@ -311,69 +313,18 @@ const SortableContentRenderer = ({ content, onContentBlockRef, nodeMapping = nul
       const newItems = arrayMove(validItems, oldIndex, newIndex);
       console.log('📍 [拖拽排序] 计算出新的项目顺序，长度:', newItems.length);
       
-      // 重新拼接包含物理分割栏的 content_with_ids 字符串
-      console.log('🔧 [字符串重组] 开始重新拼接 content_with_ids 字符串');
-      
-      const reconstructedContent = reconstructContentWithPhysicalDividers(newItems);
-      
-      if (reconstructedContent) {
-        console.log('🔧 [字符串重组] 重构完成，新字符串长度:', reconstructedContent.length);
-        console.log('🔧 [字符串重组] 新字符串前200字符:', reconstructedContent.substring(0, 200));
-      } else {
-        console.warn('🔧 [字符串重组] ⚠️ 重构失败，返回空字符串');
-      }
-      
       // 先更新本地状态，确保UI立即响应
       setItems(newItems);
       
-      // 调用父组件传入的回调函数，传递重构的字符串
+      // 调用父组件传入的回调函数，传递新的项目顺序
       if (onOrderChange) {
-        console.log('📍 [拖拽排序] 调用 onOrderChange 回调函数，传递重构的字符串');
-        onOrderChange(reconstructedContent || content); // 如果重构失败，使用原始内容
+        console.log('📍 [拖拽排序] 调用 onOrderChange 回调函数');
+        onOrderChange(newItems);
       } else {
         console.warn('📍 [拖拽排序] ⚠️ onOrderChange 回调函数未提供');
       }
     }
-  }, [items, content, onOrderChange]);
-  
-  // 重构包含物理分割栏的内容字符串
-  const reconstructContentWithPhysicalDividers = (items) => {
-    try {
-      console.log('🔧 [内容重构] 开始重构内容，项目数量:', items.length);
-      
-      const contentParts = [];
-      
-      items.forEach((item, index) => {
-        if (item.type === 'divider') {
-          // 添加分割栏标记
-          contentParts.push(`--- ${item.nodeId} ---`);
-          console.log('🔧 [内容重构] 添加分割栏:', item.nodeId);
-          
-        } else if (item.type === 'paragraph') {
-          // 添加段落内容（包含段落ID标记）
-          const paragraphContent = `[${item.paragraphId}] ${item.content}`;
-          contentParts.push(paragraphContent);
-          console.log('🔧 [内容重构] 添加段落:', item.paragraphId, '内容长度:', item.content.length);
-        }
-      });
-      
-      // 用双换行符连接所有部分
-      const reconstructedContent = contentParts.join('\n\n');
-      
-      console.log('🔧 [内容重构] 重构完成，总长度:', reconstructedContent.length);
-      console.log('🔧 [内容重构] 包含的组件统计:', {
-        分割栏: items.filter(item => item.type === 'divider').length,
-        段落: items.filter(item => item.type === 'paragraph').length,
-        总计: items.length
-      });
-      
-      return reconstructedContent;
-      
-    } catch (error) {
-      console.error('🔧 [内容重构] ❌ 重构失败:', error);
-      return null;
-    }
-  };
+  }, [items, onOrderChange]);
   
   // 获取所有项目的ID（包括段落和分割线）
   const sortableItemIds = useMemo(() => {
@@ -765,13 +716,13 @@ const DemoModeRenderer = ({ content, onContentBlockRef, isRealDocument = false, 
       id: "text-E1-protestantism",
       content: `这种辩证的必然性位于何处呢？换言之：具体来说，新教是怎样为资本主义的出现创造条件的？并非如人们会期待的那样，通过限制宗教意识形态的影响范围或通过动摇其在中世纪社会无处不在的特征，而是相反通过将其意义（relevance）普遍化：路德反对用一道鸿沟将修道院（cloisters）与礼拜（church）作为一种独立的制度（institution）同社会的其他部分隔绝开来，因为他希望基督教的态度能够渗透并决定我们整个的世俗日常生活。
 
-当然，我们很容易对新教的幻觉保持一种反讽的距离，并指出新教努力废除宗教与日常生活之间差距的最终结果是如何将宗教贬低为一种"治疗性（therapeutic）"的手段；更困难的则是要去构想新教作为中世纪社团主义和资产阶级个人主义间"消失的中介者"的必然性。换句话说，不可忽视的一点是，如果，人们不可能直接地，也就是缺少新教作为 "消失的中介者"的调解（intercession）而从中世纪的"封闭"社会进入资产阶级社会：正是新教通过其对基督教性（Christianity）的普遍化，为其撤回到私密领域预备了基础。`
+当然，我们很容易对新教的幻觉保持一种反讽的距离，并指出新教努力废除宗教与日常生活之间差距的最终结果是如何将宗教贬低为一种"治疗性（therapeutic）"的手段；更困难的则是要去构想新教作为中世纪社团主义和资本主义个人主义间"消失的中介者（vanishing mediator）"的必然性。换句话说，不可忽视的一点是，如果，人们不可能直接地，也就是缺少新教作为 "消失的中介者"的调解（intercession）而从中世纪的"封闭"社会进入资产阶级社会：正是新教通过其对基督教性（Christianity）的普遍化，为其撤回到私密领域预备了基础。`
     },
     {
       id: "text-E2-jacobinism",
       content: `在政治领域，雅各宾主义扮演了同样的角色，它甚至可以被定义为"政治的新教"。
 
-在这里，我们也很容易保持一种反讽的距离，并指出雅各宾主义如何必然会通过将社会整体粗暴地缩减为抽象的平等原则而在恐怖主义中结束，因为这种缩减受到了分支的（ramified）具体关系之网的抵制（见黑格尔在《精神现象学》中对雅各宾主义的经典批评）。更难做到的是，要证明为什么不可能从旧制度直接进入自我本位的资产阶级日常生活——为什么，正是因为他们虚幻地将社会整体还原为民主政治方案，雅各宾主义是一个必要的"消失的中介者"（黑格尔批评得实际要点并不在于说雅各宾主义方案有乌托邦－恐怖主义特征这样的老生常谈中，而是在于此）。换句话说，在雅各宾主义中发现现代"极权主义"的根源和第一个形式是很容易的；而要完全承认和采纳没有雅各宾形式的"溢出/过剩"就不会有"常态的"多元民主这样一个事实则要更加困难并令人不安。`
+在这里，我们也很容易保持一种反讽的距离，并指出雅各宾主义如何必然会通过将社会整体粗暴地缩减为抽象的平等原则而在恐怖主义中结束，因为这种缩减受到了分支的（ramified）具体关系之网的抵制（见黑格尔在《精神现象学》中对雅各宾主义的经典批评）。更难做到的是，要证明为什么不可能从旧制度直接进入自我本位的资产阶级日常生活——为什么，正是因为他们虚幻地将社会整体还原为民主政治方案，雅各宾主义是一个必要的"消失的中介者"（黑格尔批评得实际要点并不在于说雅各宾主义方案有乌托邦－恐怖主义特征这样的老生常谈中，而是在于此）。换句话说，在雅各宾主义中发现现代"极权主义"的根源和第一个形式是很容易的；而要完全承认和采纳没有雅各宾主义的"溢出/过剩"就不会有"常态的"多元民主这样一个事实则要更加困难并令人不安。`
     },
     {
       id: "text-E3-other-examples",

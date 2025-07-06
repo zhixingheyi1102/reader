@@ -196,8 +196,10 @@ flowchart TD
             setDocument(prev => ({
               ...prev,
               mermaid_code_demo: response.data.mermaid_code,
-              node_mappings_demo: response.data.node_mappings || {}
+              node_mappings_demo: response.data.node_mappings || {},
+              content_with_ids: response.data.content_with_ids || prev.content_with_ids
             }));
+            console.log('🔄 [AI分析立即完成] 已更新content_with_ids，包含物理分割栏:', !!response.data.content_with_ids);
             toast.success('论证结构流程图生成完成！');
           }
         } else {
@@ -238,8 +240,10 @@ flowchart TD
               setDocument(prev => ({
                 ...prev,
                 mermaid_code_demo: response.data.mermaid_code_demo,
-                node_mappings_demo: response.data.node_mappings_demo || {}
+                node_mappings_demo: response.data.node_mappings_demo || {},
+                content_with_ids: response.data.content_with_ids || prev.content_with_ids
               }));
+              console.log('🔄 [AI分析完成] 已更新content_with_ids，包含物理分割栏:', !!response.data.content_with_ids);
               toast.success('论证结构流程图生成完成！');
             } else if (response.data.status_demo === 'error') {
               setDemoMindmapStatus('error');

@@ -2,7 +2,7 @@
  * API 工具函数
  */
 
-const API_BASE_URL = process.env.REACT_APP_API_BASE_URL || '';
+const API_BASE_URL = process.env.REACT_APP_API_BASE_URL || 'http://localhost:8000';
 
 /**
  * 更新节点标签
@@ -114,6 +114,38 @@ export const deleteNode = async (documentId, nodeId) => {
     return await response.json();
   } catch (error) {
     console.error('❌ [API] 删除节点失败:', error);
+    throw error;
+  }
+};
+
+/**
+ * 添加节点（通用）
+ * @param {string} documentId - 文档ID
+ * @param {Object} nodeData - 节点数据
+ * @param {string} nodeData.sourceNodeId - 源节点ID
+ * @param {string} nodeData.direction - 方向：'child', 'left-sibling', 'right-sibling'
+ * @param {string} nodeData.parentId - 父节点ID（可选）
+ * @param {string} nodeData.label - 新节点标签（可选）
+ * @returns {Promise<Object>} API响应
+ */
+export const addNode = async (documentId, nodeData) => {
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/document/${documentId}/node/add`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(nodeData)
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.message || `HTTP error! status: ${response.status}`);
+    }
+
+    return await response.json();
+  } catch (error) {
+    console.error('❌ [API] 添加节点失败:', error);
     throw error;
   }
 };

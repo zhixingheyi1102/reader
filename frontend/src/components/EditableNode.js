@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Handle, Position } from 'reactflow';
-import { CornerDownRight, GitBranchPlus, MoreHorizontal, Trash2 } from 'lucide-react';
+import { CornerDownRight, GitBranchPlus, MoreHorizontal, Trash2, ArrowLeft, ArrowRight, ArrowDown } from 'lucide-react';
 import './EditableNode.css'; // 引入CSS文件
 
 // 工具栏组件
@@ -201,7 +201,7 @@ const EditableNode = ({ data, id }) => {
 
   return (
     <div 
-      className="editable-node" 
+      className="editable-node group" 
       data-node-id={id}
       onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}
@@ -233,6 +233,48 @@ const EditableNode = ({ data, id }) => {
           placeholder="输入节点内容..."
         />
       )}
+      
+      {/* 左侧添加器 */}
+      <div 
+        className="absolute left-0 top-1/2 -translate-x-full -translate-y-1/2 -ml-2 w-5 h-5 bg-gray-400 bg-opacity-60 rounded-full opacity-0 group-hover:opacity-80 hover:scale-110 hover:bg-opacity-80 cursor-pointer flex items-center justify-center text-white transition-all duration-200 z-10"
+        onClick={(e) => {
+          e.stopPropagation();
+          if (data.onAddNode) {
+            data.onAddNode(id, 'left-sibling');
+          }
+        }}
+        title="添加左侧同级节点"
+      >
+        <ArrowLeft size={10} />
+      </div>
+      
+      {/* 右侧添加器 */}
+      <div 
+        className="absolute right-0 top-1/2 translate-x-full -translate-y-1/2 ml-5 w-5 h-5 bg-gray-400 bg-opacity-60 rounded-full opacity-0 group-hover:opacity-80 hover:scale-110 hover:bg-opacity-80 cursor-pointer flex items-center justify-center text-white transition-all duration-200 z-10"
+        onClick={(e) => {
+          e.stopPropagation();
+          if (data.onAddNode) {
+            data.onAddNode(id, 'right-sibling');
+          }
+        }}
+        title="添加右侧同级节点"
+      >
+        <ArrowRight size={10} />
+      </div>
+      
+      {/* 下方添加器 */}
+      <div 
+        className="absolute bottom-0 left-1/2 translate-y-full -translate-x-1/2 mt-5 w-5 h-5 bg-gray-400 bg-opacity-60 rounded-full opacity-0 group-hover:opacity-80 hover:scale-110 hover:bg-opacity-80 cursor-pointer flex items-center justify-center text-white transition-all duration-200 z-10"
+        onClick={(e) => {
+          e.stopPropagation();
+          if (data.onAddNode) {
+            data.onAddNode(id, 'child');
+          }
+        }}
+        title="添加子节点"
+      >
+        <ArrowDown size={10} />
+      </div>
       
       {/* 条件渲染工具栏 */}
       {isHovering && (

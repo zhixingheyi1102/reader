@@ -20,6 +20,9 @@ import PDFViewer from './PDFViewer';
 
 import { StructuredMarkdownRenderer, DemoModeRenderer } from './DocumentRenderer';
 
+// 导入API函数
+import { addNode, handleApiError } from '../utils/api';
+
 const ViewerPageRefactored = () => {
   const navigate = useNavigate();
   const location = useLocation();
@@ -583,6 +586,143 @@ const ViewerPageRefactored = () => {
     }
   }, [documentId, setDocument]);
 
+  // 🔑 新增：通用添加节点的回调函数
+  const handleAddNode = useCallback(async (sourceNodeId, direction) => {
+    try {
+      console.log('🆕 [添加节点] 开始添加节点:', { sourceNodeId, direction });
+      
+      // 计算父节点ID
+      let parentId = null;
+      if (direction === 'child') {
+        // 子节点：sourceNodeId 就是父节点
+        parentId = sourceNodeId;
+      } else if (direction === 'left-sibling' || direction === 'right-sibling') {
+        // 同级节点：需要找到sourceNodeId的父节点
+        if (document?.edges) {
+          const parentEdge = document.edges.find(edge => edge.target === sourceNodeId);
+          parentId = parentEdge?.source || null;
+        } else if (document?.mermaid_code_demo) {
+          // 从mermaid代码中解析父节点
+          const mermaidLines = document.mermaid_code_demo.split('\n');
+          const parentLine = mermaidLines.find(line => line.includes(`--> ${sourceNodeId}`));
+          if (parentLine) {
+            const match = parentLine.match(/(\w+)\s*-->\s*\w+/);
+            if (match) {
+              parentId = match[1];
+            }
+          }
+        }
+      }
+      
+      console.log('🆕 [添加节点] 计算出的父节点ID:', parentId);
+      
+      // 构建API请求数据
+      const nodeData = {
+        sourceNodeId,
+        direction,
+        parentId,
+        label: '新节点'
+      };
+      
+      // 如果是示例模式，直接更新前端状态
+      if (documentId.startsWith('demo-')) {
+        console.log('🆕 [添加节点] 示例模式，直接更新前端状态');
+        
+        // 生成新节点ID
+        const newNodeId = `node_${Date.now()}`;
+        const newNodeLabel = '新节点';
+        
+        // 更新document状态
+        setDocument(prevDoc => {
+          if (!prevDoc) {
+            console.warn('🆕 [添加节点] document不存在，无法添加节点');
+            return prevDoc;
+          }
+          
+          // 创建新的node_mappings
+          const newNodeMappings = {
+            ...prevDoc.node_mappings_demo,
+            [newNodeId]: {
+              text_snippet: newNodeLabel,
+              paragraph_ids: []
+            }
+          };
+          
+          // 创建新的edges（如果存在edges数组）
+          const targetParentId = direction === 'child' ? sourceNodeId : parentId;
+          const newEdges = prevDoc.edges && targetParentId ? [
+            ...prevDoc.edges,
+            {
+              id: `edge_${targetParentId}_${newNodeId}`,
+              source: targetParentId,
+              target: newNodeId,
+              type: 'smoothstep'
+            }
+          ] : prevDoc.edges || [];
+          
+          // 更新mermaid代码
+          let updatedMermaidCode = prevDoc.mermaid_code_demo || '';
+          if (updatedMermaidCode && targetParentId) {
+            updatedMermaidCode += `\n    ${targetParentId} --> ${newNodeId}[${newNodeLabel}]`;
+          }
+          
+          console.log('🆕 [添加节点] 示例模式节点添加完成，新节点ID:', newNodeId);
+          
+          return {
+            ...prevDoc,
+            node_mappings_demo: newNodeMappings,
+            edges: newEdges,
+            mermaid_code_demo: updatedMermaidCode
+          };
+        });
+        
+        toast.success('节点已添加（示例模式）');
+      } else {
+        // 真实文档模式，调用后端API
+        console.log('🆕 [添加节点] 真实文档模式，调用后端API');
+        
+        const response = await addNode(documentId, nodeData);
+        
+        if (response.success && response.document) {
+          console.log('🆕 [添加节点] ✅ 后端API调用成功');
+          console.log('🆕 [添加节点] 📊 API返回的数据统计:');
+          console.log('   success:', response.success);
+          console.log('   new_node_id:', response.new_node_id);
+          console.log('   document 存在:', !!response.document);
+          console.log('   document.content_with_ids 长度:', response.document.content_with_ids?.length || 0);
+          console.log('   document.node_mappings_demo 数量:', Object.keys(response.document.node_mappings_demo || {}).length);
+          console.log('   document.mermaid_code_demo 长度:', response.document.mermaid_code_demo?.length || 0);
+          
+          // 打印content_with_ids的前200字符来验证更新
+          if (response.document.content_with_ids) {
+            console.log('🆕 [添加节点] 📋 API返回的content_with_ids前200字符:');
+            console.log('   ', response.document.content_with_ids.substring(0, 200));
+          }
+          
+          // 使用后端返回的完整文档状态更新前端
+          console.log('🆕 [添加节点] 🔄 开始更新前端document状态');
+          setDocument(response.document);
+          
+          // 验证状态是否会更新 - 添加一个延迟检查
+          setTimeout(() => {
+            console.log('🆕 [添加节点] 🔍 延迟验证: document状态是否已更新');
+            console.log('   当前document.content_with_ids存在:', !!document?.content_with_ids);
+            console.log('   当前document.content_with_ids长度:', document?.content_with_ids?.length || 0);
+          }, 100);
+          
+          toast.success('节点已添加');
+        } else {
+          throw new Error(response.message || '添加节点失败');
+        }
+      }
+      
+    } catch (error) {
+      console.error('❌ [添加节点] 添加节点失败:', error);
+      const errorMessage = handleApiError(error);
+      toast.error(errorMessage);
+    }
+  }, [documentId, document, setDocument]);
+
   // 处理 node_mappings 更新的函数
   const handleNodeMappingUpdate = useCallback(async (newNodeMappings) => {
     try {
@@ -1076,6 +1216,7 @@ const ViewerPageRefactored = () => {
                     highlightedNodeId={highlightedNodeId}
                     onNodeClick={handleNodeClick}
                     onNodeLabelUpdate={handleNodeLabelUpdate}
+                    onAddNode={handleAddNode}
                     onAddChildNode={handleAddChildNode}
                     onAddSiblingNode={handleAddSiblingNode}
                     onDeleteNode={handleDeleteNode}

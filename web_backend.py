@@ -1,6 +1,8 @@
 from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, FileResponse
+from pydantic import BaseModel
+from typing import List, Dict, Any, Optional
 import asyncio
 import os
 import hashlib
@@ -10,7 +12,6 @@ from datetime import datetime
 from pathlib import Path
 import logging
 import base64
-from typing import List, Dict, Any
 import json
 
 # 导入现有的思维导图生成器
@@ -50,10 +51,16 @@ PDF_OUTPUT_DIR.mkdir(exist_ok=True)
 # 存储文档状态的内存数据库
 document_status = {}
 
-
-
 # 存储文档结构的内存数据库
 document_structures = {}
+
+# Pydantic 模型定义
+class AddNodeRequest(BaseModel):
+    """添加节点的请求模型"""
+    sourceNodeId: str
+    direction: str  # 'child', 'left-sibling', 'right-sibling'
+    parentId: Optional[str] = None
+    label: Optional[str] = "新节点"
 
 class ArgumentStructureAnalyzer:
     """论证结构分析器"""
@@ -717,15 +724,19 @@ async def generate_argument_structure_async(document_id: str, content: str):
         result = await argument_analyzer.generate_argument_structure(text_with_ids)
         
         if result["success"]:
+            # 🆕 使用AI返回的node_mappings重建包含物理分割栏的内容
+            rebuilt_content = rebuild_content_with_physical_dividers(text_with_ids, result["node_mappings"])
+            
             # 更新文档状态
             document_status[document_id]["status_demo"] = "completed"
             document_status[document_id]["mermaid_code_demo"] = result["mermaid_code"]
             document_status[document_id]["node_mappings_demo"] = result["node_mappings"]
             document_status[document_id]["edges_demo"] = result["edges"]  # 保存edges数据
-            document_status[document_id]["content_with_ids"] = text_with_ids  # 保存带ID的内容
+            document_status[document_id]["content_with_ids"] = rebuilt_content  # 🆕 使用重建的内容
             
             print(f"✅ [分析完成] 文档 {document_id} 论证结构分析成功")
             print(f"📊 [生成结果] 包含 {len(result['node_mappings'])} 个论证节点和 {len(result['edges'])} 条边")
+            print(f"🔧 [内容重建] 已重建包含物理分割栏的内容，长度: {len(rebuilt_content)} 字符")
         else:
             # 分析失败
             document_status[document_id]["status_demo"] = "error"
@@ -737,6 +748,106 @@ async def generate_argument_structure_async(document_id: str, content: str):
         logger.error(f"异步生成论证结构时出错: {str(e)}")
         document_status[document_id]["status_demo"] = "error"
         document_status[document_id]["error_demo"] = str(e)
+
+def rebuild_content_with_physical_dividers(text_with_ids: str, node_mappings: Dict) -> str:
+    """
+    根据AI返回的node_mappings重建包含物理分割栏的内容
+    
+    Args:
+        text_with_ids: 包含段落ID标记的原始文本
+        node_mappings: AI返回的节点映射，包含paragraph_ids
+        
+    Returns:
+        重建的包含物理分割栏的内容字符串
+    """
+    try:
+        print(f"🔧 [内容重建] 开始重建包含物理分割栏的内容")
+        print(f"🔧 [内容重建] 输入内容长度: {len(text_with_ids)} 字符")
+        print(f"🔧 [内容重建] 节点数量: {len(node_mappings)}")
+        
+        # 第一步：解析原始内容，提取段落ID和对应的内容
+        paragraph_content_map = {}
+        
+        # 按段落分割内容，保留段落ID标记
+        parts = re.split(r'(\[para-\d+\])', text_with_ids)
+        current_paragraph_id = None
+        current_content = ''
+        
+        for part in parts:
+            # 检查是否是段落ID标记
+            para_match = re.match(r'\[para-(\d+)\]', part.strip())
+            if para_match:
+                # 保存之前的段落内容
+                if current_paragraph_id and current_content.strip():
+                    paragraph_content_map[current_paragraph_id] = current_content.strip()
+                
+                # 设置新的段落ID
+                current_paragraph_id = f"para-{para_match.group(1)}"
+                current_content = ''
+                print(f"🔧 [内容重建] 发现段落: {current_paragraph_id}")
+            else:
+                # 累积内容
+                if part.strip():  # 只添加非空内容
+                    current_content += part
+        
+        # 处理最后一个段落
+        if current_paragraph_id and current_content.strip():
+            paragraph_content_map[current_paragraph_id] = current_content.strip()
+        
+        print(f"🔧 [内容重建] 解析出 {len(paragraph_content_map)} 个段落")
+        
+        # 第二步：按照node_mappings重新组织内容
+        rebuilt_content_parts = []
+        
+        # 遍历所有节点，按照它们在node_mappings中的顺序
+        for node_id, node_data in node_mappings.items():
+            # 添加物理分割栏
+            rebuilt_content_parts.append(f"--- {node_id} ---\n")
+            print(f"🔧 [内容重建] 处理节点: {node_id}")
+            
+            # 获取该节点包含的段落ID列表
+            paragraph_ids = node_data.get('paragraph_ids', [])
+            print(f"🔧 [内容重建] 节点 {node_id} 包含段落: {paragraph_ids}")
+            
+            # 添加该节点的所有段落内容
+            node_content_parts = []
+            for para_id in paragraph_ids:
+                if para_id in paragraph_content_map:
+                    para_content = paragraph_content_map[para_id]
+                    # 保留段落ID标记
+                    node_content_parts.append(f"[{para_id}] {para_content}")
+                    print(f"🔧 [内容重建] 添加段落 {para_id}，内容长度: {len(para_content)}")
+                else:
+                    print(f"⚠️ [内容重建] 警告: 段落 {para_id} 在原内容中未找到")
+            
+            # 将节点的所有段落内容合并
+            if node_content_parts:
+                rebuilt_content_parts.append('\n\n'.join(node_content_parts))
+                rebuilt_content_parts.append('\n\n')  # 节点间的分隔
+        
+        # 第三步：合并所有部分
+        rebuilt_content = ''.join(rebuilt_content_parts).strip()
+        
+        print(f"✅ [内容重建] 重建完成")
+        print(f"✅ [内容重建] 重建后内容长度: {len(rebuilt_content)} 字符")
+        print(f"✅ [内容重建] 包含 {len(node_mappings)} 个物理分割栏")
+        
+        # 验证重建结果
+        divider_count = len(re.findall(r'--- [^-]+ ---', rebuilt_content))
+        print(f"✅ [内容重建] 验证: 找到 {divider_count} 个分割栏")
+        
+        # 打印重建内容的前200字符用于调试
+        print(f"🔍 [内容重建] 重建内容前200字符:")
+        print(f"   {rebuilt_content[:200]}...")
+        
+        return rebuilt_content
+        
+    except Exception as e:
+        print(f"❌ [内容重建错误] {str(e)}")
+        import traceback
+        traceback.print_exc()
+        # 出错时返回原始内容
+        return text_with_ids
 
 @app.get("/api/document-status/{document_id}")
 async def get_document_status(document_id: str):
@@ -1016,6 +1127,446 @@ async def update_node_mappings(document_id: str, request_data: dict):
             status_code=500,
             content={"success": False, "message": f"更新节点映射失败: {str(e)}"}
         )
+
+@app.post("/api/document/{document_id}/node/add")
+async def add_node(document_id: str, request_data: AddNodeRequest):
+    """添加新节点到文档结构"""
+    try:
+        print(f"🆕 [API] 收到添加节点请求 - 文档ID: {document_id}")
+        print(f"🆕 [API] 请求参数: sourceNodeId={request_data.sourceNodeId}, direction={request_data.direction}, parentId={request_data.parentId}")
+        
+        # 检查文档是否存在
+        if document_id not in document_status:
+            return JSONResponse(
+                status_code=404,
+                content={"success": False, "message": f"文档 {document_id} 不存在"}
+            )
+        
+        document_data = document_status[document_id]
+        
+        # 获取必要的文档数据
+        content_with_ids = document_data.get('content_with_ids', '')
+        node_mappings = document_data.get('node_mappings_demo', {})
+        mermaid_string = document_data.get('mermaid_code_demo', '')
+        
+        if not content_with_ids:
+            return JSONResponse(
+                status_code=400,
+                content={"success": False, "message": "文档内容为空或未包含段落ID"}
+            )
+        
+        # 生成新节点ID和标签
+        new_node_id = f"node_{int(datetime.now().timestamp() * 1000)}"
+        new_node_label = request_data.label or "新节点"
+        
+        print(f"🆕 [API] 生成新节点ID: {new_node_id}")
+        
+        # 解析content_with_ids以找到插入点
+        updated_content = await insert_divider_in_content(
+            content_with_ids, 
+            request_data.sourceNodeId,
+            request_data.direction,
+            new_node_id,
+            node_mappings
+        )
+        
+        if updated_content is None:
+            return JSONResponse(
+                status_code=400,
+                content={"success": False, "message": "无法找到合适的插入位置"}
+            )
+        
+        # 更新node_mappings
+        updated_node_mappings = node_mappings.copy()
+        updated_node_mappings[new_node_id] = {
+            "text_snippet": new_node_label,
+            "paragraph_ids": [],
+            "semantic_role": "新添加的节点"
+        }
+        
+        # 更新mermaid_string
+        updated_mermaid = update_mermaid_string(
+            mermaid_string,
+            new_node_id,
+            new_node_label,
+            request_data.direction,
+            request_data.sourceNodeId,
+            request_data.parentId
+        )
+        
+        # 更新文档状态
+        document_status[document_id].update({
+            'content_with_ids': updated_content,
+            'node_mappings_demo': updated_node_mappings,
+            'mermaid_code_demo': updated_mermaid
+        })
+        
+        print(f"🆕 [API] ✅ 成功添加节点 {new_node_id} 到文档 {document_id}")
+        print(f"🆕 [API] 📊 更新后的数据统计:")
+        print(f"   content_with_ids 长度: {len(updated_content)} 字符")
+        print(f"   node_mappings 数量: {len(updated_node_mappings)}")
+        print(f"   mermaid_code 长度: {len(updated_mermaid)} 字符")
+        print(f"🆕 [API] 📋 更新后的 content_with_ids 前200字符:")
+        print(f"   {updated_content[:200]}...")
+        
+        # 构建返回的文档数据
+        updated_document = document_status[document_id]
+        
+        # 验证关键数据是否存在
+        if not updated_document.get('content_with_ids'):
+            print(f"❌ [API] 警告: 返回数据中 content_with_ids 为空")
+        if not updated_document.get('node_mappings_demo'):
+            print(f"❌ [API] 警告: 返回数据中 node_mappings_demo 为空")
+        if not updated_document.get('mermaid_code_demo'):
+            print(f"❌ [API] 警告: 返回数据中 mermaid_code_demo 为空")
+        
+        print(f"🆕 [API] 📤 返回给前端的数据包含以下字段:")
+        print(f"   {list(updated_document.keys())}")
+        
+        # 返回更新后的完整文档
+        return JSONResponse(content={
+            "success": True,
+            "message": "节点添加成功",
+            "document": updated_document,
+            "new_node_id": new_node_id
+        })
+        
+    except Exception as e:
+        print(f"❌ [API错误] 添加节点失败: {str(e)}")
+        return JSONResponse(
+            status_code=500,
+            content={"success": False, "message": f"添加节点失败: {str(e)}"}
+        )
+
+async def insert_divider_in_content(content: str, source_node_id: str, direction: str, new_node_id: str, node_mappings: Dict) -> Optional[str]:
+    """
+    在content_with_ids中插入新的分割栏标记
+    使用精确的字符串操作，根据direction执行不同的插入策略
+    """
+    try:
+        print(f"🔍 [精确插入] 开始插入分割栏")
+        print(f"🔍 [精确插入] 源节点: {source_node_id}, 方向: {direction}, 新节点: {new_node_id}")
+        print(f"🔍 [精确插入] 内容长度: {len(content)} 字符")
+        
+        # 创建新的分割栏标记
+        new_divider = f"--- {new_node_id} ---"
+        
+        if direction == 'child':
+            # 子节点：找到 sourceNodeId 的整个内容范围的末尾，插入新分割栏
+            print(f"🔍 [精确插入-child] 处理子节点插入")
+            
+            # 找到源节点的分割栏位置
+            source_pattern = f"--- {re.escape(source_node_id)} ---"
+            source_match = re.search(source_pattern, content)
+            
+            if not source_match:
+                print(f"❌ [精确插入-child] 未找到源节点分割栏: {source_node_id}")
+                return None
+            
+            # 找到源节点内容范围的末尾（下一个分割栏的开始位置或文档末尾）
+            next_divider_pattern = r"\n--- [^-]+ ---"
+            next_match = None
+            for match in re.finditer(next_divider_pattern, content[source_match.end():]):
+                next_match = match
+                break
+            
+            if next_match:
+                # 在下一个分割栏前插入
+                insert_pos = source_match.end() + next_match.start()
+                print(f"🔍 [精确插入-child] 在位置 {insert_pos} 插入（下一个分割栏前）")
+            else:
+                # 在文档末尾插入
+                insert_pos = len(content)
+                print(f"🔍 [精确插入-child] 在位置 {insert_pos} 插入（文档末尾）")
+            
+            # 执行插入
+            updated_content = content[:insert_pos] + f"\n\n{new_divider}\n\n" + content[insert_pos:]
+            
+        elif direction == 'left-sibling':
+            # 左侧同级：在 --- sourceNodeId --- 这个子串的正前方插入
+            print(f"🔍 [精确插入-left-sibling] 处理左侧同级插入")
+            
+            source_pattern = f"--- {re.escape(source_node_id)} ---"
+            source_match = re.search(source_pattern, content)
+            
+            if not source_match:
+                print(f"❌ [精确插入-left-sibling] 未找到源节点分割栏: {source_node_id}")
+                return None
+            
+            # 在源节点分割栏正前方插入
+            insert_pos = source_match.start()
+            print(f"🔍 [精确插入-left-sibling] 在位置 {insert_pos} 插入（源节点分割栏前）")
+            
+            # 执行插入
+            updated_content = content[:insert_pos] + f"{new_divider}\n\n" + content[insert_pos:]
+            
+        elif direction == 'right-sibling':
+            # 右侧同级：构建节点树，找到子树结束位置后插入
+            print(f"🔍 [精确插入-right-sibling] 处理右侧同级插入")
+            
+            # 构建节点树结构
+            node_tree = build_node_tree_from_content(content, node_mappings)
+            if not node_tree:
+                print(f"❌ [精确插入-right-sibling] 无法构建节点树")
+                return None
+            
+            # 找到源节点及其子树的结束位置
+            subtree_end_pos = find_node_subtree_end(content, source_node_id, node_tree)
+            if subtree_end_pos is None:
+                print(f"❌ [精确插入-right-sibling] 无法找到源节点子树结束位置")
+                return None
+            
+            print(f"🔍 [精确插入-right-sibling] 在位置 {subtree_end_pos} 插入（子树末尾后）")
+            
+            # 执行插入
+            updated_content = content[:subtree_end_pos] + f"\n\n{new_divider}\n\n" + content[subtree_end_pos:]
+            
+        else:
+            print(f"❌ [精确插入] 不支持的方向: {direction}")
+            return None
+        
+        print(f"✅ [精确插入] 成功插入新分割栏，节点ID: {new_node_id}")
+        print(f"✅ [精确插入] 新内容长度: {len(updated_content)} 字符")
+        
+        # 验证插入结果
+        divider_count = len(re.findall(r'--- [^-]+ ---', updated_content))
+        print(f"✅ [精确插入] 验证：更新后找到 {divider_count} 个分割栏")
+        
+        return updated_content
+        
+    except Exception as e:
+        print(f"❌ [精确插入错误] {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return None
+
+def build_node_tree_from_content(content: str, node_mappings: Dict) -> Optional[Dict]:
+    """
+    从content_with_ids和mermaid连接关系构建节点树结构
+    
+    Returns:
+        节点树字典，格式: {node_id: {'children': [child_ids], 'position': (start, end)}}
+    """
+    try:
+        print(f"🌳 [构建节点树] 开始构建节点树")
+        
+        # 解析所有分割栏位置
+        divider_pattern = r'--- ([^-]+) ---'
+        matches = list(re.finditer(divider_pattern, content))
+        
+        if not matches:
+            print(f"🌳 [构建节点树] 没有找到分割栏")
+            return None
+        
+        # 构建节点位置映射
+        node_positions = {}
+        for i, match in enumerate(matches):
+            node_id = match.group(1).strip()
+            start_pos = match.start()
+            # 下一个分割栏的开始位置，或文档末尾
+            end_pos = matches[i + 1].start() if i + 1 < len(matches) else len(content)
+            node_positions[node_id] = (start_pos, end_pos)
+            print(f"🌳 [构建节点树] 节点 {node_id}: 位置 {start_pos}-{end_pos}")
+        
+        # 从node_mappings构建父子关系（这里简化处理，假设节点按顺序排列）
+        # 实际应该从mermaid_string解析连接关系，但这里使用位置顺序作为近似
+        node_tree = {}
+        node_ids = list(node_positions.keys())
+        
+        for i, node_id in enumerate(node_ids):
+            node_tree[node_id] = {
+                'children': [],
+                'position': node_positions[node_id],
+                'level': 0  # 简化处理，假设都是同级
+            }
+        
+        print(f"🌳 [构建节点树] 构建完成，包含 {len(node_tree)} 个节点")
+        return node_tree
+        
+    except Exception as e:
+        print(f"❌ [构建节点树错误] {str(e)}")
+        return None
+
+def find_node_subtree_end(content: str, source_node_id: str, node_tree: Dict) -> Optional[int]:
+    """
+    找到源节点及其所有子孙节点构成的子树的结束位置
+    
+    Args:
+        content: 文档内容
+        source_node_id: 源节点ID
+        node_tree: 节点树结构
+        
+    Returns:
+        子树结束位置，如果找不到则返回None
+    """
+    try:
+        print(f"🔍 [子树查找] 查找节点 {source_node_id} 的子树结束位置")
+        
+        if source_node_id not in node_tree:
+            print(f"❌ [子树查找] 节点 {source_node_id} 不在节点树中")
+            return None
+        
+        # 获取源节点的位置
+        source_position = node_tree[source_node_id]['position']
+        source_end = source_position[1]
+        
+        print(f"🔍 [子树查找] 源节点位置: {source_position}")
+        
+        # 简化实现：由于没有真正的父子关系，直接返回节点内容的结束位置
+        # 在实际实现中，应该遍历所有子节点，找到最远的子孙节点位置
+        
+        # 查找紧接在源节点后面的子节点们（基于缩进或顺序判断）
+        max_end_pos = source_end
+        
+        # 这里简化处理，假设同一级别的节点按顺序排列
+        # 实际应该解析mermaid连接关系来确定真正的父子关系
+        for node_id, node_info in node_tree.items():
+            node_start, node_end = node_info['position']
+            # 如果节点在源节点之后且是其子节点（这里简化判断）
+            if node_start > source_end:
+                # 简化：只考虑紧接着的第一个节点作为边界
+                max_end_pos = node_start
+                break
+        
+        print(f"🔍 [子树查找] 确定子树结束位置: {max_end_pos}")
+        return max_end_pos
+        
+    except Exception as e:
+        print(f"❌ [子树查找错误] {str(e)}")
+        return None
+
+def parse_content_structure(content: str, node_mappings: Dict) -> tuple:
+    """解析content_with_ids的结构，返回分割栏位置和节点区域"""
+    divider_positions = {}
+    node_regions = {}
+    
+    # 查找所有分割栏
+    divider_pattern = r'\n*---\s*([^-\n]+)\s*---\n*'
+    matches = list(re.finditer(divider_pattern, content))
+    
+    print(f"🔍 [结构解析] 找到 {len(matches)} 个分割栏")
+    
+    for i, match in enumerate(matches):
+        node_id = match.group(1).strip()
+        start_pos = match.start()
+        end_pos = match.end()
+        
+        divider_positions[node_id] = {
+            'start': start_pos,
+            'end': end_pos,
+            'match': match
+        }
+        
+        # 确定节点区域（从分割栏到下一个分割栏或文档末尾）
+        next_divider_start = matches[i + 1].start() if i + 1 < len(matches) else len(content)
+        
+        node_regions[node_id] = {
+            'start': start_pos,  # 分割栏开始位置
+            'end': next_divider_start,  # 下一个分割栏开始位置或文档末尾
+            'content_start': end_pos,  # 实际内容开始位置（分割栏后）
+            'content_end': next_divider_start  # 实际内容结束位置
+        }
+        
+        print(f"🔍 [结构解析] 节点 {node_id}: start={start_pos}, end={next_divider_start}")
+    
+    return divider_positions, node_regions
+
+def find_subtree_end(node_id: str, node_regions: Dict, content: str) -> int:
+    """找到节点及其整个子树的末尾位置（用于right-sibling插入）"""
+    # 这是一个简化实现，假设节点按层级顺序排列
+    # 更复杂的实现需要构建实际的树结构
+    if node_id in node_regions:
+        return node_regions[node_id]['end']
+    return len(content)
+
+def update_mermaid_string(mermaid_string: str, new_node_id: str, new_node_label: str, direction: str, source_node_id: str, parent_id: Optional[str]) -> str:
+    """更新mermaid字符串，添加新节点和连接"""
+    try:
+        print(f"🔄 [Mermaid更新] 开始更新，新节点: {new_node_id}, 标签: {new_node_label}")
+        print(f"🔄 [Mermaid更新] 方向: {direction}, 源节点: {source_node_id}, 父节点: {parent_id}")
+        print(f"🔄 [Mermaid更新] 原始Mermaid长度: {len(mermaid_string)}")
+        
+        updated_mermaid = mermaid_string or "graph TD"
+        
+        # 确保以换行符结尾
+        if not updated_mermaid.endswith('\n'):
+            updated_mermaid += '\n'
+        
+        # 添加新节点定义
+        new_node_def = f"    {new_node_id}[{new_node_label}]"
+        updated_mermaid += new_node_def + '\n'
+        
+        # 根据方向决定连接关系
+        if direction == 'child':
+            # 子节点：源节点指向新节点
+            connection = f"    {source_node_id} --> {new_node_id}"
+            print(f"🔄 [Mermaid更新] 子节点连接: {source_node_id} --> {new_node_id}")
+        else:
+            # 同级节点：需要找到共同的父节点
+            if parent_id:
+                # 如果明确提供了父节点ID，使用它
+                target_parent = parent_id
+                print(f"🔄 [Mermaid更新] 使用提供的父节点: {target_parent}")
+            else:
+                # 从现有的mermaid字符串中查找源节点的父节点
+                target_parent = find_parent_node_in_mermaid(updated_mermaid, source_node_id)
+                print(f"🔄 [Mermaid更新] 从Mermaid中查找到父节点: {target_parent}")
+            
+            if target_parent:
+                connection = f"    {target_parent} --> {new_node_id}"
+                print(f"🔄 [Mermaid更新] 同级节点连接: {target_parent} --> {new_node_id}")
+            else:
+                # 如果找不到父节点，作为根节点处理
+                connection = f"    ROOT --> {new_node_id}"
+                print(f"🔄 [Mermaid更新] 未找到父节点，使用ROOT连接")
+        
+        updated_mermaid += connection + '\n'
+        
+        print(f"✅ [Mermaid更新] 添加节点定义: {new_node_def}")
+        print(f"✅ [Mermaid更新] 添加连接: {connection}")
+        print(f"✅ [Mermaid更新] 更新后长度: {len(updated_mermaid)}")
+        
+        return updated_mermaid
+        
+    except Exception as e:
+        print(f"❌ [Mermaid更新错误] {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return mermaid_string or "graph TD"
+
+def find_parent_node_in_mermaid(mermaid_string: str, child_node_id: str) -> Optional[str]:
+    """从mermaid字符串中查找指定节点的父节点"""
+    try:
+        print(f"🔍 [查找父节点] 在Mermaid中查找 {child_node_id} 的父节点")
+        print(f"🔍 [查找父节点] Mermaid内容: {mermaid_string[:200]}...")
+        
+        # 改进的正则表达式：更准确地匹配节点ID和连接关系
+        # 匹配形如 "parent_node --> child_node_id" 或 "parent_node --> child_node_id[label]" 的连接
+        escaped_child_id = re.escape(child_node_id)
+        
+        # 尝试多个匹配模式
+        patterns = [
+            # 匹配 "parent --> child" 或 "parent --> child[label]" 或 "parent --> child "
+            rf'([A-Za-z0-9_]+)\s*-->\s*{escaped_child_id}(?:\[|$|\s|-->)',
+            # 匹配带空格的情况
+            rf'([A-Za-z0-9_]+)\s*-->\s*{escaped_child_id}(?=\s|$|-->|\[)',
+            # 匹配行结尾的情况
+            rf'([A-Za-z0-9_]+)\s*-->\s*{escaped_child_id}$'
+        ]
+        
+        for i, pattern in enumerate(patterns):
+            match = re.search(pattern, mermaid_string, re.MULTILINE)
+            if match:
+                parent_id = match.group(1)
+                print(f"🔍 [查找父节点] 使用模式 {i+1} 找到 {child_node_id} 的父节点: {parent_id}")
+                return parent_id
+        
+        print(f"🔍 [查找父节点] 未找到 {child_node_id} 的父节点")
+        return None
+        
+    except Exception as e:
+        print(f"❌ [查找父节点错误] {str(e)}")
+        return None
 
 if __name__ == "__main__":
     import uvicorn

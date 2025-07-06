@@ -31,6 +31,7 @@ const nodeTypes = {
  * @param {string} props.highlightedNodeId - 需要高亮的节点ID
  * @param {Function} props.onNodeClick - 节点点击回调函数
  * @param {Function} props.onNodeLabelUpdate - 节点标签更新回调函数
+ * @param {Function} props.onAddNode - 添加节点回调函数（通用）
  * @param {Function} props.onAddChildNode - 添加子节点回调函数
  * @param {Function} props.onAddSiblingNode - 添加同级节点回调函数
  * @param {Function} props.onDeleteNode - 删除节点回调函数
@@ -43,6 +44,7 @@ const FlowDiagramInner = ({
   highlightedNodeId,
   onNodeClick, 
   onNodeLabelUpdate,
+  onAddNode,
   onAddChildNode,
   onAddSiblingNode,
   onDeleteNode,
@@ -143,6 +145,7 @@ const FlowDiagramInner = ({
         data: {
           ...node.data,
           onLabelChange: (...args) => handleLabelChangeRef.current?.(...args), // 使用ref中的函数
+          onAddNode: onAddNode,
           onAddChildNode: onAddChildNode,
           onAddSiblingNode: onAddSiblingNode,
           onDeleteNode: onDeleteNode
@@ -504,6 +507,7 @@ const FlowDiagram = forwardRef(({
   highlightedNodeId, 
   onNodeClick, 
   onNodeLabelUpdate,
+  onAddNode,
   onAddChildNode,
   onAddSiblingNode,
   onDeleteNode,
@@ -578,6 +582,7 @@ const FlowDiagram = forwardRef(({
           highlightedNodeId={highlightedNodeId}
           onNodeClick={onNodeClick}
           onNodeLabelUpdate={onNodeLabelUpdate}
+          onAddNode={onAddNode}
           onAddChildNode={onAddChildNode}
           onAddSiblingNode={onAddSiblingNode}
           onDeleteNode={onDeleteNode}
