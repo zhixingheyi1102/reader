@@ -38,7 +38,8 @@ export const convertDataToReactFlow = (apiData) => {
   // 匹配Mermaid图表中的连接关系，支持多种格式：
   // A --> B, A -> B, A --- B, A -- B
   // 支持带标签的节点，如：A[标签] --> B[标签]
-  const connectionRegex = /([A-Za-z0-9_]+)(?:\[[^\]]*\])?\s*(-{1,2}>?|={1,2}>?)\s*([A-Za-z0-9_]+)(?:\[[^\]]*\])?/g;
+  // 🆕 支持数字ID格式：1 --> 2, 1.1 --> 1.2, 1.1.1 --> 1.1.2
+  const connectionRegex = /([A-Za-z0-9_.]+)(?:\[[^\]]*\])?\s*(-{1,2}>?|={1,2}>?)\s*([A-Za-z0-9_.]+)(?:\[[^\]]*\])?/g;
   let match;
   let edgeIndex = 0;
 
@@ -68,4 +69,4 @@ export const convertDataToReactFlow = (apiData) => {
   console.log('🔧 [数据转换] 边数量:', edges.length);
 
   return { nodes, edges };
-}; 
+};

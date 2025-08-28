@@ -110,7 +110,8 @@ class Config:
     ANTHROPIC_API_KEY = os.getenv('ANTHROPIC_API_KEY')
     DEEPSEEK_API_KEY = os.getenv('DEEPSEEK_API_KEY')
     GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')  # Add Gemini API key
-    API_PROVIDER = os.getenv('API_PROVIDER') # "OPENAI", "CLAUDE", "DEEPSEEK", or "GEMINI"
+    OPENROUTER_API_KEY = os.getenv('OPENROUTER_API_KEY')  # Add OpenRouter API key
+    API_PROVIDER = os.getenv('API_PROVIDER') # "OPENAI", "CLAUDE", "DEEPSEEK", "GEMINI", or "OPENROUTER"
     
     # Model settings
     CLAUDE_MODEL_STRING = "claude-3-5-haiku-latest"
@@ -119,10 +120,12 @@ class Config:
     DEEPSEEK_CHAT_MODEL = "deepseek-chat"
     DEEPSEEK_REASONER_MODEL = "deepseek-reasoner"
     GEMINI_MODEL_STRING = "gemini-2.0-flash-lite"  # Add Gemini model string
+    OPENROUTER_MODEL_STRING = "google/gemini-2.5-pro"  # Add OpenRouter Gemini 2.5 Pro model
     CLAUDE_MAX_TOKENS = 200000
     OPENAI_MAX_TOKENS = 8192
     DEEPSEEK_MAX_TOKENS = 8192
     GEMINI_MAX_TOKENS = 8192  # Add Gemini max tokens
+    OPENROUTER_MAX_TOKENS = 8192  # Add OpenRouter max tokens
     TOKEN_BUFFER = 500
     
     # Cost tracking (prices in USD per token)
@@ -136,6 +139,8 @@ class Config:
     DEEPSEEK_REASONER_OUTPUT_PRICE = 2.19/1000000  # Reasoner output price (includes CoT)
     GEMINI_INPUT_TOKEN_PRICE = 0.075/1000000  # Gemini 2.0 Flash Lite input price estimate
     GEMINI_OUTPUT_TOKEN_PRICE = 0.30/1000000  # Gemini 2.0 Flash Lite output price estimate
+    OPENROUTER_INPUT_TOKEN_PRICE = 1.25/1000000  # Gemini 2.5 Pro input price via OpenRouter
+    OPENROUTER_OUTPUT_TOKEN_PRICE = 5.00/1000000  # Gemini 2.5 Pro output price via OpenRouter
 
 class TokenUsageTracker:
     def __init__(self):
@@ -191,6 +196,11 @@ class TokenUsageTracker:
             task_cost = (
                 input_tokens * Config.GEMINI_INPUT_TOKEN_PRICE + 
                 output_tokens * Config.GEMINI_OUTPUT_TOKEN_PRICE
+            )
+        elif Config.API_PROVIDER == "OPENROUTER":
+            task_cost = (
+                input_tokens * Config.OPENROUTER_INPUT_TOKEN_PRICE + 
+                output_tokens * Config.OPENROUTER_OUTPUT_TOKEN_PRICE
             )
         else:  # OPENAI
             task_cost = (
@@ -359,6 +369,11 @@ class DocumentOptimizer:
             api_key=Config.DEEPSEEK_API_KEY,
             base_url="https://api.deepseek.com"
         )
+        # Initialize OpenRouter client
+        self.openrouter_client = AsyncOpenAI(
+            api_key=Config.OPENROUTER_API_KEY,
+            base_url="https://openrouter.ai/api/v1"
+        )
         # Initialize Google GenAI client only if needed
         self.gemini_client = None
         if Config.API_PROVIDER == "GEMINI" and Config.GEMINI_API_KEY and GOOGLE_AI_AVAILABLE:
@@ -467,6 +482,54 @@ class DocumentOptimizer:
                     
                 except Exception as e:
                     logger.error(f"Gemini API error: {str(e)}")
+                    return None
+            elif Config.API_PROVIDER == "OPENROUTER":
+                try:
+                    response = await self.openrouter_client.chat.completions.create(
+                        model=Config.OPENROUTER_MODEL_STRING,
+                        messages=[{"role": "user", "content": prompt}],
+                        max_tokens=max_tokens,
+                        temperature=0.7,
+                        extra_headers={
+                            "HTTP-Referer": "https://mindmap-generator.local",
+                            "X-Title": "Mindmap Generator"
+                        }
+                    )
+                    
+                    # 检查响应是否有效
+                    if not response or not response.choices or len(response.choices) == 0:
+                        logger.error("OpenRouter API返回了空响应或无choices")
+                        return None
+                    
+                    response_text = response.choices[0].message.content
+                    
+                    # 检查响应内容是否为空
+                    if not response_text or response_text.strip() == "":
+                        logger.error(f"OpenRouter API返回了空内容: {response_text}")
+                        return None
+                    
+                    response_preview = " ".join(response_text.split()[:30])
+                    
+                    # Extract token usage
+                    input_tokens = getattr(response.usage, 'prompt_tokens', 0)
+                    output_tokens = getattr(response.usage, 'completion_tokens', 0)
+                    
+                    self.token_tracker.update(
+                        input_tokens,
+                        output_tokens,
+                        task or "unknown"
+                    )
+                    
+                    logger.info(
+                        f"\n{colored('✅ API Response', 'green', attrs=['bold'])}\n"
+                        f"Response preview: {colored(response_preview + '...', 'white')}\n"
+                        f"Tokens: {colored(f'Input={input_tokens}, Output={output_tokens}', 'yellow')}"
+                    )
+                    
+                    return response_text
+                    
+                except Exception as e:
+                    logger.error(f"OpenRouter API error: {str(e)}")
                     return None
             elif Config.API_PROVIDER == "OPENAI":
                 response = await self.openai_client.chat.completions.create(

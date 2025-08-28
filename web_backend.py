@@ -365,7 +365,7 @@ mermaid_string:
 node_mappings:
 - 值为 JSON 对象，键为 Mermaid 图中的节点 ID（必须是数字格式，如 "1", "2", "1.1", "1.2"）
 - 每个节点对应的值包含：
-  - "text_snippet": 该节点包含段落的核心内容总结（30-80字）
+  - "text_snippet": 该节点包含段落的核心内容总结（10-20字）
   - "paragraph_ids": 构成该节点的段落ID数组（如 ["para-2", "para-3"]）
   - "semantic_role": 该节点在论证中的角色（如 "引言"、"核心论点"、"支撑证据"、"反驳"、"结论" 等）
 
@@ -391,9 +391,10 @@ edges:
 {text_with_ids}"""
             
             # 使用DocumentOptimizer的generate_completion方法
+            # 进一步增加max_tokens以避免响应被截断（OpenRouter日志显示finish_reason为'length'）
             response = await self.optimizer.generate_completion(
                 prompt, 
-                max_tokens=2000,
+                max_tokens=16000,
                 task="分析论证结构"
             )
             
@@ -420,7 +421,7 @@ edges:
                     f.write("=== API调用信息 ===\n")
                     f.write(f"时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
                     f.write(f"任务: 论证结构分析\n")
-                    f.write(f"最大tokens: 2000\n")
+                    f.write(f"最大tokens: 16000\n")
                     f.write(f"响应长度: {len(response)} 字符\n")
                     f.write(f"文本长度: {len(text_with_ids)} 字符\n")
                     f.write("\n=== 发送的Prompt ===\n")
@@ -464,6 +465,37 @@ edges:
                 else:
                     print(f"⚠️ [JSON提取失败] 无法找到有效的JSON结构")
                 
+                # 移除了有问题的fix_duplicate_keys函数，直接使用原始JSON
+                
+                # 清理JSON中的控制字符
+                def clean_control_characters(json_str: str) -> str:
+                    """清理JSON字符串中的无效控制字符"""
+                    import re
+                    
+                    # 移除开头的反斜杠（如果存在）
+                    if json_str.startswith('\\'):
+                        json_str = json_str[1:]
+                    
+                    # 替换常见的控制字符
+                    # 保留合法的转义字符，清理无效的控制字符
+                    json_str = re.sub(r'[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]', '', json_str)
+                    
+                    # 修复双重转义的问题
+                    json_str = json_str.replace('\\\\n', '\\n')
+                    json_str = json_str.replace('\\\\r', '\\r')
+                    json_str = json_str.replace('\\\\t', '\\t')
+                    
+                    # 确保字符串中的换行符被正确转义（但不要重复转义）
+                    if '\\n' not in json_str:
+                        json_str = json_str.replace('\n', '\\n')
+                    if '\\r' not in json_str:
+                        json_str = json_str.replace('\r', '\\r')
+                    if '\\t' not in json_str:
+                        json_str = json_str.replace('\t', '\\t')
+                    
+                    return json_str
+                
+                clean_response = clean_control_characters(clean_response)
                 print(f"🔍 [清理后响应前200字符]: {clean_response[:200]}")
                 
                 structure_data = json.loads(clean_response)
@@ -1855,4 +1887,4 @@ if __name__ == "__main__":
     print("🚀 启动服务中...")
     print("")
     
-    uvicorn.run(app, host="0.0.0.0", port=8000, log_level="info") 
+    uvicorn.run(app, host="0.0.0.0", port=8000, log_level="info")
