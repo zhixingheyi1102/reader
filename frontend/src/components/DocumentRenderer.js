@@ -16,7 +16,7 @@ const parseContentWithDividers = (content, onContentBlockRef, nodeMapping = null
   console.log('🔧 [物理分割栏解析] 内容前200字符:', content.substring(0, 200));
   
   // 使用正则表达式分割内容，保留分割栏标记
-  const dividerRegex = /(--- ([A-Za-z0-9_]+) ---)/g;
+  const dividerRegex = /(--- ([A-Za-z0-9_.-]+) ---)/g;
   const parts = content.split(dividerRegex).filter(part => part.trim());
   
   console.log('🔧 [物理分割栏解析] 分割后得到', parts.length, '个部分');
@@ -45,7 +45,7 @@ const parseContentWithDividers = (content, onContentBlockRef, nodeMapping = null
     if (!part) continue;
     
     // 检查是否是分割栏标记
-    const dividerMatch = part.match(/^--- ([A-Za-z0-9_]+) ---$/);
+    const dividerMatch = part.match(/^--- ([A-Za-z0-9_.-]+) ---$/);
     
     if (dividerMatch) {
       // 这是一个分割栏

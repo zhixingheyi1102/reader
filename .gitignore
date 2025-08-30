@@ -250,21 +250,3 @@ emoji_cache.json
 
 # 测试文件
 test_mindmap.mmd
-
-# API响应和敏感数据
-api_responses/
-!api_responses/README.md
-documents.db
-*.db
-
-# PDF输出文件
-pdf_outputs/
-
-# 备份文件
-*_backup.py
-web_backend_backup.py
-web_backend_integrated.py
-
-# 项目特定的临时文件
-repomix-output.xml
-markdown.md
